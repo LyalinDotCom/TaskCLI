@@ -33,7 +33,7 @@ node bin/taskcli.js --headless "Build an Express API skeleton with tests"
 node bin/taskcli.js -y --headless "Initialize a Node project with chalk and execa"
 
 # Override models
-node bin/taskcli.js --headless --flash-model gemini-2.5-flash --pro-model gemini-1.5-pro "Create a TypeScript CLI"
+node bin/taskcli.js --headless --flash-model gemini-2.5-flash --pro-model gemini-2.5-pro "Create a TypeScript CLI"
 ```
 
 Non-Interactive Smoke Test (no network)

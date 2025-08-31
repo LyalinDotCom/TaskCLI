@@ -1,5 +1,7 @@
 import React from 'react';
 import { render, Box, Text, useApp, useInput } from 'ink';
+import os from 'node:os';
+import path from 'node:path';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import chalk from 'chalk';
@@ -7,6 +9,32 @@ import { orchestrate } from '../orchestrator.js';
 import { saveSession, saveCommandOutput } from '../session.js';
 
 const h = React.createElement;
+
+function gradientText(text) {
+  const colors = ['#8be9fd', '#bd93f9', '#ff79c6', '#ffb86c'];
+  const chars = [...text];
+  return h(
+    Text,
+    null,
+    ...chars.map((ch, i) => h(Text, { key: i, color: colors[i % colors.length], bold: true }, ch)),
+  );
+}
+
+function headerBanner(version) {
+  const title = 'TASKCLI';
+  const line = ' '.repeat(1) + '>'.repeat(1) + ' ' + title + ' ';
+  return h(
+    Box,
+    { flexDirection: 'column' },
+    h(Box, null, gradientText(line)),
+    h(Box, { marginTop: 1 }, h(Text, { color: 'gray' }, 'Tips: 1) Be specific  2) Ask to edit/run  3) Press Esc Esc to cancel')),
+  );
+}
+
+function tildePath(p) {
+  const home = os.homedir();
+  return p.startsWith(home) ? p.replace(home, '~') : p;
+}
 
 function Message({ role, text }) {
   // Minimal, distinct styles per role
@@ -67,11 +95,7 @@ export function App({ session, models, initialInput, options }) {
   const MAX_QUEUE_ITEMS = 5;
 
   React.useEffect(() => {
-    setMessages((m) => [
-      ...m,
-      { role: 'system', text: 'TaskCLI interactive mode. Type instructions and press Enter. Press Esc twice to cancel.' },
-      { role: 'sep' },
-    ]);
+    // No default system message; header + tips provide context
   }, []);
 
   // Double-Escape to cancel current run
@@ -245,7 +269,13 @@ export function App({ session, models, initialInput, options }) {
   return h(
     Box,
     { flexDirection: 'column', paddingX: 1, paddingY: 1 },
-    h(Box, null, h(Text, null, `${chalk.bold('TaskCLI Interactive')} — Session ${session.id}`)),
+    // Header banner + session id
+    h(
+      Box,
+      { flexDirection: 'column' },
+      headerBanner(''),
+      h(Box, null, h(Text, { color: 'gray' }, `Session ${session.id}`)),
+    ),
     h(
       Box,
       { marginTop: 1, flexDirection: 'column', flexGrow: 1 },
@@ -295,8 +325,8 @@ export function App({ session, models, initialInput, options }) {
     h(
       Box,
       { justifyContent: 'space-between' },
-      h(Text, { color: 'cyan' }, progressText),
-      bannerText ? h(Text, { color: bannerColor }, bannerText) : null,
+      h(Text, { color: 'cyan' }, progressText || 'Ready'),
+      bannerText ? h(Text, { color: bannerColor }, bannerText) : h(Text, { color: 'gray' }, `${tildePath(session?.meta?.cwd || process.cwd())}  |  ${session?.meta?.proModel || ''}`),
     ),
   );
 }

@@ -31,7 +31,7 @@ function loadEnv() {
 }
 
 function parseArgs(argv) {
-  const args = { interactive: true, headless: false, yes: false, flashModel: process.env.FLASH_MODEL || 'gemini-2.5-flash', proModel: process.env.PRO_MODEL || 'gemini-1.5-pro', cwd: process.cwd() };
+  const args = { interactive: true, headless: false, yes: false, flashModel: process.env.FLASH_MODEL || 'gemini-2.5-flash', proModel: process.env.PRO_MODEL || 'gemini-2.5-pro', cwd: process.cwd() };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -59,7 +59,7 @@ function printHelp() {
     `      --doctor       Run environment checks\n` +
     `  -y, --yes           Auto-confirm shell commands\n` +
     `  --flash-model NAME  Model for planning (default: gemini-2.5-flash)\n` +
-    `  --pro-model NAME    Model for execution (default: gemini-1.5-pro)\n` +
+    `  --pro-model NAME    Model for execution (default: gemini-2.5-pro)\n` +
     `  --cwd PATH          Working directory for tasks\n` +
     `  -h, --help          Show help\n\n` +
     `Env:\n` +
