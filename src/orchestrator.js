@@ -236,6 +236,7 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
     plan = await planTasks({ userGoal, models, session, ui });
   } catch (e) {
     appendEvent(session, { type: 'plan_error', message: String(e) });
+    if (ui?.onModelEnd) ui.onModelEnd(); // Ensure spinner is off
     if (ui?.onLog) ui.onLog(chalk.red('Planning failed: ') + String(e?.message || e));
     else console.log(chalk.red('Planning failed: ') + String(e?.message || e));
     return { ok: false, error: e?.message || String(e) };
@@ -251,6 +252,7 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
 
   // If user requested cancel during planning, respect it now
   if (ui?.shouldCancel && ui.shouldCancel()) {
+    if (ui?.onModelEnd) ui.onModelEnd(); // Ensure spinner is off
     if (ui?.onLog) ui.onLog('Execution cancelled by user.');
     return { ok: false, error: 'cancelled' };
   }
@@ -267,6 +269,7 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
     for (let i = 0; i < MAX_STEP_CYCLES && !stepDone; i++) {
       // Allow cancel between cycles
       if (ui?.shouldCancel && ui.shouldCancel()) {
+        if (ui?.onModelEnd) ui.onModelEnd(); // Ensure spinner is off
         if (ui?.onLog) ui.onLog('Execution cancelled by user.');
         return { ok: false, error: 'cancelled' };
       }
@@ -305,6 +308,7 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
       
       if (!agentRes.ok) {
         if (agentRes.cancelled) {
+          if (ui?.onModelEnd) ui.onModelEnd(); // Ensure spinner is off
           if (ui?.onLog) ui.onLog('Execution cancelled by user.');
           return { ok: false, error: 'cancelled' };
         }
@@ -339,10 +343,12 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
       consecutiveFailures = 0;
 
       if (agentRes.next === 'cancel') {
+        if (ui?.onModelEnd) ui.onModelEnd(); // Ensure spinner is off
         if (ui?.onLog) ui.onLog('Agent requested cancel.');
         return { ok: false, error: 'cancelled' };
       }
       if (agentRes.next === 'ask_user') {
+        if (ui?.onModelEnd) ui.onModelEnd(); // Ensure spinner is off
         if (ui?.onLog) ui.onLog('Agent needs user input to proceed.');
         return { ok: false, error: 'user_input_required' };
       }
@@ -396,6 +402,10 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
 
   const total = plan.length;
   appendEvent(session, { type: 'completed', summary: `Completed ${total} tasks` });
+  
+  // Ensure model spinner is turned off
+  if (ui?.onModelEnd) ui.onModelEnd();
+  
   if (ui?.onComplete) ui.onComplete(total);
   else console.log(chalk.green(`\nAll ${total} tasks completed.`));
   return { ok: true };

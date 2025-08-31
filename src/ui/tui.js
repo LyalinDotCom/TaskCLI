@@ -332,6 +332,9 @@ export function App({ session, models, initialInput, options }) {
     } finally {
       setBusy(false);
       setCanceling(false);
+      // Ensure model spinner is off when orchestration completes
+      setModelBusy(false);
+      setModelName('');
       // Drain queued inputs
       setQueue((q) => {
         const copy = [...q];
