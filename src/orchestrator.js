@@ -113,8 +113,30 @@ async function execTask(task, ctx) {
         const res = await smartRunCommand({ command: task.command, cwd, ui: ctx.ui, models, options, session });
         appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}`, stdout: res.stdout, stderr: res.stderr });
         if (!res.ok) throw new Error(res.error || 'Command failed');
-        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
-        else taskSuccess(task);
+        // If the command looks like a directory listing, summarize results with Pro
+        const looksLikeList = /(^|\s)(ls|find|tree|dir)(\s|$)/.test(task.command);
+        if (looksLikeList && res.stdout) {
+          const summaryPrompt = `Summarize the following directory listing concisely for a human:
+Provide:
+- Top-level files and directories (short bullet list)
+- Notable files (README, package.json, etc.)
+- Rough counts of subdirectories / files when large
+- Keep under ~12 lines; do not repeat the entire listing
+
+Listing:
+${res.stdout.slice(-50000)}`;
+          try {
+            const summary = await models.generateProWithContext(summaryPrompt, session, 0.2);
+            if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, summary);
+            else taskSuccess(task);
+          } catch {
+            if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
+            else taskSuccess(task);
+          }
+        } else {
+          if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
+          else taskSuccess(task);
+        }
         return { ok: true };
       }
       case 'search_web': {
@@ -142,7 +164,24 @@ async function execTask(task, ctx) {
           if (fs.existsSync(c)) { closeText = fs.readFileSync(c, 'utf8'); break; }
         }
         if (ctx.ui?.onLog) ctx.ui.onLog('Preparing session closeout...');
-        const finalNote = await models.generateProWithContext(closeText, session, 0.2);
+        const timeoutMs = Number(process.env.PRO_CLOSEOUT_TIMEOUT_MS || 15000);
+        let finalNote;
+        try {
+          finalNote = await Promise.race([
+            models.generateProWithContext(closeText, session, 0.2),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Closeout timed out')), timeoutMs)),
+          ]);
+        } catch (e) {
+          // Fallback local closeout summary
+          const items = [];
+          const hist = session.history || [];
+          const wrote = hist.filter(h => h.type === 'write_file').map(h => h.summary);
+          const ran = hist.filter(h => h.type === 'run_command').map(h => h.summary);
+          if (wrote.length) items.push(`Files written: ${wrote.join('; ')}`);
+          if (ran.length) items.push(`Commands run: ${ran.join('; ')}`);
+          items.push('Next steps: review generated files, rerun commands if needed, and provide any missing preferences.');
+          finalNote = items.join('\n');
+        }
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, finalNote);
         else taskSuccess(task);
         appendEvent(session, { type: 'closeout', summary: 'Generated closeout note' });

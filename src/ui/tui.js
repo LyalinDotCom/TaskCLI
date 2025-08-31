@@ -88,23 +88,32 @@ export function App({ session, models, initialInput, options }) {
     onPlan: (t) => {
       setTasks(t);
       appendMessage({ role: 'agent', text: `Planned ${t.length} tasks.` });
-      appendMessage({ role: 'spacer' });
-      appendMessage({ role: 'tasks', text: renderTasksSnapshot(t, {}) });
-      appendMessage({ role: 'sep' });
+      const snap = renderTasksSnapshot(t, {});
+      if (snap.trim().length > 0) {
+        appendMessage({ role: 'spacer' });
+        appendMessage({ role: 'tasks', text: snap });
+        appendMessage({ role: 'sep' });
+      }
     },
     onTaskStart: (task) => {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'running' };
-        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
-        appendMessage({ role: 'spacer' });
+        const snap = renderTasksSnapshot(tasks, ns);
+        if (snap.trim().length > 0) {
+          appendMessage({ role: 'tasks', text: snap });
+          appendMessage({ role: 'spacer' });
+        }
         return ns;
       });
     },
     onTaskSuccess: (task, maybeData) => {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'done' };
-        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
-        appendMessage({ role: 'spacer' });
+        const snap = renderTasksSnapshot(tasks, ns);
+        if (snap.trim().length > 0) {
+          appendMessage({ role: 'tasks', text: snap });
+          appendMessage({ role: 'spacer' });
+        }
         if (maybeData) {
           const preview = String(maybeData);
           appendMessage({ role: 'result', text: preview.length > 2000 ? preview.slice(0, 2000) + '\n…' : preview });
