@@ -130,7 +130,10 @@ async function execAction(action, ctx) {
         const cmd = action.command;
         const res = await smartRunCommand({ command: cmd, cwd: action.cwd || cwd, ui, models, options, session });
         appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${cmd}`, stdout: res.stdout, stderr: res.stderr });
-        if (!res.ok) return { ok: false, error: res.error || 'Command failed' };
+        if (!res.ok) {
+          if (res.cancelled) return { ok: false, cancelled: true };
+          return { ok: false, error: res.error || 'Command failed' };
+        }
         return { ok: true };
       }
       case 'search_web': {

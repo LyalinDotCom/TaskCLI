@@ -51,6 +51,16 @@ async function execTask(task, ctx) {
   else startTask(task);
   try {
     switch (task.type) {
+      case 'ask_user': {
+        const qs = Array.isArray(task.questions) ? task.questions : [];
+        const msg = qs.length
+          ? 'Needs clarification:\n- ' + qs.join('\n- ')
+          : 'Needs clarification from the user to proceed.';
+        appendEvent(session, { type: 'ask_user', summary: msg });
+        if (ctx.ui?.onLog) ctx.ui.onLog(msg);
+        // Stop execution to wait for user input
+        throw new Error('user_input_required');
+      }
       case 'read_file': {
         const res = await readFs(session.meta.cwd, task.path);
         appendEvent(session, { type: 'read_file', summary: `Read ${task.path}` });

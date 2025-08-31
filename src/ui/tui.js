@@ -58,6 +58,9 @@ export function App({ session, models, initialInput, options }) {
   const [lastCommand, setLastCommand] = React.useState('');
   const [queue, setQueue] = React.useState([]);
   const [cancelRequested, setCancelRequested] = React.useState(false);
+  const [progressText, setProgressText] = React.useState('Idle');
+  const [bannerText, setBannerText] = React.useState('');
+  const [bannerColor, setBannerColor] = React.useState('yellow');
 
   const MAX_MESSAGES = 150;
   const MAX_CMD_CHARS = 4000;
@@ -73,6 +76,7 @@ export function App({ session, models, initialInput, options }) {
 
   // Double-Escape to cancel current run
   const [lastEscAt, setLastEscAt] = React.useState(0);
+  const killRef = React.useRef(null);
   useInput((input, key) => {
     if (key.escape) {
       const now = Date.now();
@@ -80,10 +84,13 @@ export function App({ session, models, initialInput, options }) {
       if (now - lastEscAt <= windowMs) {
         setCancelRequested(true);
         setLastEscAt(0);
-        appendMessage({ role: 'system', text: 'Cancel requested (Esc Esc). Finishing current action then stopping…' });
+        setBannerText('Cancel requested. Attempting to stop…');
+        setBannerColor('red');
+        try { if (typeof killRef.current === 'function') killRef.current(); } catch {}
       } else {
         setLastEscAt(now);
-        appendMessage({ role: 'system', text: 'Press Esc again to cancel…' });
+        setBannerText('Press Esc again to cancel…');
+        setBannerColor('yellow');
       }
     }
   });
@@ -111,6 +118,8 @@ export function App({ session, models, initialInput, options }) {
     onPlan: (t) => {
       setTasks(t);
       appendMessage({ role: 'agent', text: `Planned ${t.length} tasks.` });
+      const vis = t.filter((x) => x.type !== 'session_close');
+      setProgressText(vis.length > 0 ? `Ready — 0 of ${vis.length}` : 'Ready');
       const snap = renderTasksSnapshot(t, {});
       if (snap.trim().length > 0) {
         appendMessage({ role: 'spacer' });
@@ -126,6 +135,10 @@ export function App({ session, models, initialInput, options }) {
           appendMessage({ role: 'tasks', text: snap });
           appendMessage({ role: 'spacer' });
         }
+        const vis = tasks.filter((x) => x.type !== 'session_close');
+        const idx = Math.max(0, vis.findIndex((x) => x.id === task.id));
+        setProgressText(`Step ${idx + 1} of ${vis.length} — ${task.title}`);
+        setBannerText('');
         return ns;
       });
     },
@@ -142,6 +155,9 @@ export function App({ session, models, initialInput, options }) {
           appendMessage({ role: 'result', text: preview.length > 2000 ? preview.slice(0, 2000) + '\n…' : preview });
         }
         appendMessage({ role: 'sep' });
+        const vis = tasks.filter((x) => x.type !== 'session_close');
+        const idx = Math.max(0, vis.findIndex((x) => x.id === task.id));
+        setProgressText(`Completed ${idx + 1}/${vis.length} — ${task.title}`);
         return ns;
       });
     },
@@ -179,6 +195,7 @@ export function App({ session, models, initialInput, options }) {
       } catch {}
       appendMessage({ role: 'sep' });
     },
+    onRegisterKill: (fn) => { killRef.current = fn || null; },
     onComplete: (count) => appendMessage({ role: 'agent', text: `Completed ${count} tasks.` }),
     shouldCancel: () => !!cancelRequested,
     drainQueuedInputs: () => {
@@ -231,15 +248,26 @@ export function App({ session, models, initialInput, options }) {
     h(Box, null, h(Text, null, `${chalk.bold('TaskCLI Interactive')} — Session ${session.id}`)),
     h(
       Box,
-      { marginTop: 1, flexDirection: 'column' },
+      { marginTop: 1, flexDirection: 'column', flexGrow: 1 },
       ...messages.map((m, idx) => h(Message, { key: String(idx), role: m.role, text: m.text })),
     ),
+    // Compact queue indicator above input
     queue.length > 0
       ? h(
           Box,
-          { marginTop: 1, flexDirection: 'column', borderStyle: 'round', padding: 1 },
-          h(Text, null, chalk.yellow('Queued inputs (next up):')),
-          h(Text, null, queue.slice(0, MAX_QUEUE_ITEMS).map((q, i) => `${i + 1}. ${q.length > 60 ? q.slice(0, 57) + '…' : q}`).join(' | ') + (queue.length > MAX_QUEUE_ITEMS ? ` (+${queue.length - MAX_QUEUE_ITEMS} more)` : '')),
+          { marginTop: 0 },
+          h(Text, null, chalk.yellow('Queued: ')),
+          h(
+            Text,
+            null,
+            queue
+              .slice(0, MAX_QUEUE_ITEMS)
+              .map((q, i) => `${i + 1}. ${q.length > 40 ? q.slice(0, 37) + '…' : q}`)
+              .join(' | '),
+          ),
+          queue.length > MAX_QUEUE_ITEMS
+            ? h(Text, null, ` ${chalk.gray(`(+${queue.length - MAX_QUEUE_ITEMS} more)`)}`)
+            : null,
         )
       : null,
     h(
@@ -257,12 +285,18 @@ export function App({ session, models, initialInput, options }) {
           setInput('');
           if (busy) {
             setQueue((q) => [...q, trimmed]);
-            appendMessage({ role: 'system', text: `Queued: ${trimmed}` });
           } else {
             runOrchestrator(trimmed);
           }
         },
       }),
+    ),
+    // Bottom status bar row (pinned at very bottom)
+    h(
+      Box,
+      { justifyContent: 'space-between' },
+      h(Text, { color: 'cyan' }, progressText),
+      bannerText ? h(Text, { color: bannerColor }, bannerText) : null,
     ),
   );
 }

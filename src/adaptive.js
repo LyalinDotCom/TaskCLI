@@ -24,6 +24,7 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
   };
   if (ui?.onLog) ui.onLog(chalk.gray(`Executing command...`));
   if (ui?.onCommandStart) ui.onCommandStart(command);
+  let killHandler = null;
   const res = await runCommand(command, {
     cwd,
     env: baseEnv,
@@ -31,8 +32,16 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
     onStderr: ui?.onCommandErr,
     idleTimeoutMs: 15000,
     timeoutMs: 15 * 60 * 1000,
+    onStart: (proc) => {
+      killHandler = () => { try { proc.kill('SIGINT'); } catch {} };
+      if (ui?.onRegisterKill) ui.onRegisterKill(killHandler);
+    },
   });
   if (ui?.onCommandDone) ui.onCommandDone({ code: res.code ?? 0, ok: !!res.ok });
+  if (ui?.onRegisterKill) ui.onRegisterKill(null);
+  if (res.cancelled) {
+    return { ok: false, error: 'Cancelled', cancelled: true, stdout: res.stdout, stderr: res.stderr };
+  }
   if (res.ok) return { ok: true, stdout: res.stdout, stderr: res.stderr };
 
   const interactive = res.timeout === 'idle' || detectInteractive(res.stdout, res.stderr);

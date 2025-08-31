@@ -15,9 +15,16 @@ REQUIREMENTS
   - search_web { query: string, numResults?: number }
   - generate_file_from_prompt { path: string, prompt: string }
   - edit_file { path: string, instruction: string }
+  - ask_user { questions: string[] }  // Use this when the goal is vague/ambiguous/incomplete.
 - If code/content must be generated, do NOT inline it here. Provide a concise 'content_prompt' or 'prompt' that the Pro model will use to generate high-quality code.
 - Use relative paths under the working dir. Ensure parent folders exist implicitly.
 - Always include a short title and rationale for each task.
+
+CLARIFICATION POLICY (IMPORTANT)
+- Do NOT fabricate tasks when the goal is vague, ambiguous, or missing critical details (e.g., inputs like "test", "help", "code", or single words).
+- In such cases, return a single task of type "ask_user" with 1–3 precise questions that are necessary to proceed.
+- Examples of when to ask_user: unknown language/framework, missing target file/dir, unclear deliverable, or conflicting constraints.
+
 
 GOAL
 ${goal}
@@ -27,6 +34,14 @@ Return JSON only, like:
   {"id":"T1","type":"run_command","title":"Init project","rationale":"Bootstrap Node app","command":"npm init -y"},
   {"id":"T2","type":"write_file","title":"Create README","rationale":"Docs","path":"README.md","content_prompt":"Write concise usage and setup for TaskCLI"},
   {"id":"T3","type":"generate_file_from_prompt","title":"Main module","rationale":"Core logic","path":"src/index.js","prompt":"Implement X with Y interfaces"}
+]}
+
+If the goal is vague or ambiguous, return:
+{"tasks":[
+  {"id":"T1","type":"ask_user","title":"Clarify requirements","rationale":"The goal is too vague to plan safely.","questions":[
+    "What do you want to build or test specifically?",
+    "Which language/framework or target directory should we use?"
+  ]}
 ]}`;
 }
 

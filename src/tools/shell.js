@@ -3,13 +3,14 @@ import chalk from 'chalk';
 
 export async function runCommand(
   command,
-  { cwd, onStdout, onStderr, env, timeoutMs, idleTimeoutMs } = {},
+  { cwd, onStdout, onStderr, env, timeoutMs, idleTimeoutMs, onStart } = {},
 ) {
   const [cmd, ...rest] = Array.isArray(command) ? command : command.split(' ');
   const args = rest;
   return new Promise((resolve) => {
     const collected = { stdout: '', stderr: '' };
     let inactivityTimer;
+    let cancelledSignal = null;
     const resetInactivity = () => {
       if (idleTimeoutMs) {
         clearTimeout(inactivityTimer);
@@ -21,6 +22,10 @@ export async function runCommand(
     };
 
     const proc = execa(cmd, args, { cwd, stdio: 'pipe', shell: true, env, timeout: timeoutMs });
+    if (typeof onStart === 'function') {
+      try { onStart(proc); } catch {}
+    }
+    proc.on('exit', (_code, signal) => { if (signal) cancelledSignal = signal; });
     resetInactivity();
     proc.stdout?.on('data', (d) => {
       const s = d.toString();
@@ -43,7 +48,8 @@ export async function runCommand(
         clearTimeout(inactivityTimer);
         const msg = err?.stderr || err?.stdout || err?.message || String(err);
         if (!onStderr) console.error('\n' + chalk.red(`Command failed: ${msg}`));
-        resolve({ ok: false, code: err.exitCode ?? 1, error: msg, ...collected });
+        const isCancelled = !!(err?.signal || cancelledSignal) && ['SIGINT','SIGTERM','SIGKILL'].includes(err?.signal || cancelledSignal);
+        resolve({ ok: false, code: err.exitCode ?? 1, error: msg, ...collected, cancelled: isCancelled, signal: err?.signal || cancelledSignal });
       });
   });
 }
