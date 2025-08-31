@@ -87,3 +87,27 @@ Rules:
 Input:
 ${JSON.stringify(payload, null, 2)}`;
 }
+
+export function planAdjustPrompt({ goal, currentPlan, queuedInputs }) {
+  return `You are TaskCLI's planning brain (Gemini Flash). Adjust the current plan based on new user inputs.
+
+GOAL
+${goal}
+
+CURRENT PLAN (array of Task with id/type/title/rationale/command/path)
+${JSON.stringify(currentPlan, null, 2)}
+
+NEW USER INPUTS
+${queuedInputs && queuedInputs.length ? queuedInputs.map((s, i) => `${i + 1}. ${s}`).join('\n') : '(none)'}
+
+Return JSON only with one of:
+{"action":"cancel","note":"why"}
+or
+{"action":"update","tasks": Task[], "note":"short rationale"}
+
+Constraints:
+- Keep tasks valid for the executor (types: write_file, read_file, run_command, search_web, generate_file_from_prompt, edit_file).
+- Preserve existing task IDs when still relevant; use new IDs for added items.
+- Remove tasks that are no longer applicable.
+- Keep the list concise and safe.`;
+}

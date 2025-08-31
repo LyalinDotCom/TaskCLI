@@ -52,6 +52,7 @@ export function App({ session, models, initialInput, options }) {
   const [cmdBuffer, setCmdBuffer] = React.useState('');
   const [lastCommand, setLastCommand] = React.useState('');
   const [queue, setQueue] = React.useState([]);
+  const [cancelRequested, setCancelRequested] = React.useState(false);
 
   const MAX_MESSAGES = 150;
   const MAX_CMD_CHARS = 4000;
@@ -157,11 +158,21 @@ export function App({ session, models, initialInput, options }) {
       appendMessage({ role: 'sep' });
     },
     onComplete: (count) => appendMessage({ role: 'agent', text: `Completed ${count} tasks.` }),
+    shouldCancel: () => !!cancelRequested,
+    drainQueuedInputs: () => {
+      const items = [...queue];
+      if (items.length > 0) {
+        appendMessage({ role: 'system', text: `Processing ${items.length} queued input(s)` });
+      }
+      setQueue([]);
+      return items;
+    },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [tasks, taskStatus, lastCommand, cmdBuffer]);
+  }), [tasks, taskStatus, lastCommand, cmdBuffer, queue, cancelRequested]);
 
   async function runOrchestrator(goal) {
     setBusy(true);
+    setCancelRequested(false);
     setCmdBuffer('');
     setMessages((m) => [...m, { role: 'sep' }, { role: 'user', text: goal }, { role: 'spacer' }]);
     try {
@@ -222,6 +233,11 @@ export function App({ session, models, initialInput, options }) {
           const trimmed = val.trim();
           if (!trimmed) return;
           setInput('');
+          if (trimmed.toLowerCase() === '/cancel' || trimmed.toLowerCase() === 'cancel' || trimmed.toLowerCase() === '/stop') {
+            setCancelRequested(true);
+            appendMessage({ role: 'system', text: 'Cancel requested. Finishing current action then stopping…' });
+            return;
+          }
           if (busy) {
             setQueue((q) => [...q, trimmed]);
             appendMessage({ role: 'system', text: `Queued: ${trimmed}` });

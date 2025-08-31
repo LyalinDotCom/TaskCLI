@@ -2,13 +2,14 @@ import chalk from 'chalk';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { planningPrompt, codeGenPrompt, editFilePrompt } from './prompts.js';
+import { planningPrompt, codeGenPrompt, editFilePrompt, planAdjustPrompt } from './prompts.js';
 import { appendEvent, summarizeMemory, upsertTask } from './session.js';
 import { writeFile as writeFs, readFile as readFs } from './tools/fs.js';
 import { runCommand } from './tools/shell.js';
 import { smartRunCommand } from './adaptive.js';
 import { webSearch } from './tools/search.js';
 import { printTaskList, startTask, taskSuccess, taskFailure } from './ui.js';
+import { runProAgentCycle } from './agent.js';
 
 function safeParseJSON(text) {
   try {
@@ -199,9 +200,9 @@ ${res.stdout.slice(-50000)}`;
 
 export async function orchestrate({ userGoal, models, session, options = {}, ui }) {
   appendEvent(session, { type: 'user_goal', message: userGoal });
-  let tasks;
+  let plan;
   try {
-    tasks = await planTasks({ userGoal, models, session, ui });
+    plan = await planTasks({ userGoal, models, session, ui });
   } catch (e) {
     appendEvent(session, { type: 'plan_error', message: String(e) });
     if (ui?.onLog) ui.onLog(chalk.red('Planning failed: ') + String(e?.message || e));
@@ -209,22 +210,96 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
     return { ok: false, error: e?.message || String(e) };
   }
 
-  // Merge into session tasks
-  for (const t of tasks) upsertTask(session, { ...t, status: 'pending' });
-  if (!ui?.onPlan) printTaskList(tasks);
+  // Merge into session tasks store
+  for (const t of plan) upsertTask(session, { ...t, status: 'pending' });
+  if (!ui?.onPlan) printTaskList(plan);
 
-  // Execute tasks in order
-  for (const task of tasks) {
-    const res = await execTask(task, { session, models, options, ui });
-    if (!res.ok) {
-      appendEvent(session, { type: 'task_failed', message: task.title, error: res.error });
-      return { ok: false, error: res.error };
+  const done = new Set();
+  const byId = new Map(plan.map((t) => [t.id, t]));
+
+  // Helper: remaining visible tasks (exclude session_close)
+  const remaining = () => plan.filter((t) => t.type !== 'session_close' && !done.has(t.id));
+
+  // Main loop: alternate agent cycles with optional plan adjustment
+  let cycles = 0;
+  const MAX_CYCLES = Number(process.env.TASKCLI_MAX_CYCLES || 20);
+  while (cycles < MAX_CYCLES && remaining().length > 0) {
+    cycles++;
+    const agentRes = await runProAgentCycle({ userGoal, plan: remaining(), session, models, options, ui });
+    if (!agentRes.ok) {
+      if (agentRes.cancelled) {
+        if (ui?.onLog) ui.onLog('Execution cancelled by user.');
+        return { ok: false, error: 'cancelled' };
+      }
+      // Fallback: execute the very next task directly using the classic path
+      const nextTask = remaining()[0];
+      if (!nextTask) break;
+      const res = await execTask(nextTask, { session, models, options, ui });
+      if (!res.ok) {
+        appendEvent(session, { type: 'task_failed', message: nextTask.title, error: res.error });
+        return { ok: false, error: res.error };
+      }
+      done.add(nextTask.id);
+      upsertTask(session, { ...nextTask, status: 'done' });
+    } else {
+      // Mark completed by ID if supplied
+      for (const tid of agentRes.completedTasks || []) {
+        if (byId.has(tid)) {
+          done.add(tid);
+          upsertTask(session, { ...byId.get(tid), status: 'done' });
+        }
+      }
+
+      // Heuristic: if agent executed actions but no completedTasks, advance one item
+      if ((!agentRes.completedTasks || agentRes.completedTasks.length === 0) && remaining().length > 0) {
+        // Mark the first pending as progressed when actions ran
+        done.add(remaining()[0].id);
+        upsertTask(session, { ...remaining()[0], status: 'done' });
+      }
+
+      if (agentRes.next === 'cancel') {
+        if (ui?.onLog) ui.onLog('Agent requested cancel.');
+        return { ok: false, error: 'cancelled' };
+      }
     }
-    upsertTask(session, { ...task, status: 'done' });
+
+    // After each cycle, check for new user inputs to adjust the plan
+    const queued = typeof ui?.drainQueuedInputs === 'function' ? ui.drainQueuedInputs() : [];
+    if (queued && queued.length > 0) {
+      const adjustPrompt = planAdjustPrompt({ goal: userGoal, currentPlan: plan.filter((t) => !t.hidden), queuedInputs: queued });
+      const text = await models.generateWithFlash(adjustPrompt, 0.2);
+      const parsed = safeParseJSON(text) || {};
+      if (parsed.action === 'cancel') {
+        if (ui?.onLog) ui.onLog(`Cancelled: ${parsed.note || ''}`);
+        return { ok: false, error: 'cancelled' };
+      }
+      if (parsed.action === 'update' && Array.isArray(parsed.tasks)) {
+        // Replace plan with new tasks + append closeout
+        const newPlan = parsed.tasks.concat(plan.find((t) => t.type === 'session_close') || []);
+        plan = newPlan;
+        // Rebuild maps and preserve done where possible
+        byId.clear();
+        for (const t of plan) byId.set(t.id, t);
+        // If any tasks were removed, ignore their done state
+        if (ui?.onPlan) ui.onPlan(plan);
+        else printTaskList(plan);
+      }
+    }
   }
 
-  appendEvent(session, { type: 'completed', summary: `Completed ${tasks.length} tasks` });
-  if (ui?.onComplete) ui.onComplete(tasks.length);
-  else console.log(chalk.green(`\nAll ${tasks.length} tasks completed.`));
+  // Final closeout task (if present)
+  const close = plan.find((t) => t.type === 'session_close');
+  if (close) {
+    const res = await execTask(close, { session, models, options, ui });
+    if (!res.ok) {
+      appendEvent(session, { type: 'task_failed', message: close.title, error: res.error });
+      return { ok: false, error: res.error };
+    }
+  }
+
+  const total = plan.length;
+  appendEvent(session, { type: 'completed', summary: `Completed ${total} tasks` });
+  if (ui?.onComplete) ui.onComplete(total);
+  else console.log(chalk.green(`\nAll ${total} tasks completed.`));
   return { ok: true };
 }
