@@ -28,6 +28,8 @@ Return JSON only with this shape:
  "actions":[ ToolAction ... ],
  "completedTasks":["T1","T2"],
  "next":"continue|ask_user|cancel|done",
+ "complete": true|false,
+ "final": "optional short summary/result for this step",
  "planUpdates": {"add":[Task], "remove":["Tid"], "note":"optional rationale"}}
 
 Where ToolAction is one of:
@@ -52,7 +54,7 @@ function buildAgentPrompt({ userGoal, plan, cwd }) {
     .filter((t) => t && !t.hidden && t.type !== 'session_close')
     .map((t) => ({ id: t.id, type: t.type, title: t.title, rationale: t.rationale, path: t.path, command: t.command }))
     ;
-  return `You are the Gemini Pro execution agent for TaskCLI. You will propose a short list of tool actions to advance the plan.
+  return `You are the Gemini Pro execution agent for TaskCLI. Focus on completing the current step end-to-end. You may need multiple cycles: run tools, observe output, then decide if more tool use is needed. Only mark complete when the user's step is fully satisfied.
 
 GOAL
 ${userGoal}
@@ -62,6 +64,9 @@ ${cwd}
 
 CURRENT PLAN (pending only)
 ${JSON.stringify(planSnapshot, null, 2)}
+
+FOCUS STEP (complete this one now)
+${JSON.stringify({ id: plan?.[0]?.id, type: plan?.[0]?.type, title: plan?.[0]?.title, rationale: plan?.[0]?.rationale, path: plan?.[0]?.path, command: plan?.[0]?.command }, null, 2)}
 
 CONTROL SPEC
 ${toolSpec()}
@@ -192,6 +197,7 @@ export async function runProAgentCycle({ userGoal, plan, session, models, option
   }
 
   const next = parsed.next || 'continue';
-  return { ok: true, next, completedTasks: Array.isArray(parsed.completedTasks) ? parsed.completedTasks : [], planUpdates: parsed.planUpdates };
+  const complete = !!parsed.complete || next === 'done';
+  const final = typeof parsed.final === 'string' ? parsed.final : undefined;
+  return { ok: true, next, complete, final, completedTasks: Array.isArray(parsed.completedTasks) ? parsed.completedTasks : [], planUpdates: parsed.planUpdates };
 }
-

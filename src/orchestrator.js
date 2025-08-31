@@ -214,56 +214,60 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
   for (const t of plan) upsertTask(session, { ...t, status: 'pending' });
   if (!ui?.onPlan) printTaskList(plan);
 
-  const done = new Set();
-  const byId = new Map(plan.map((t) => [t.id, t]));
+  // Execute tasks sequentially; each step may require multiple agent cycles
+  const MAX_STEP_CYCLES = Number(process.env.TASKCLI_MAX_STEP_CYCLES || 20);
+  const visibleTasks = plan.filter((t) => t.type !== 'session_close');
+  for (const task of visibleTasks) {
+    // Start visual status
+    if (ui?.onTaskStart) ui.onTaskStart(task); else startTask(task);
 
-  // Helper: remaining visible tasks (exclude session_close)
-  const remaining = () => plan.filter((t) => t.type !== 'session_close' && !done.has(t.id));
-
-  // Main loop: alternate agent cycles with optional plan adjustment
-  let cycles = 0;
-  const MAX_CYCLES = Number(process.env.TASKCLI_MAX_CYCLES || 20);
-  while (cycles < MAX_CYCLES && remaining().length > 0) {
-    cycles++;
-    const agentRes = await runProAgentCycle({ userGoal, plan: remaining(), session, models, options, ui });
-    if (!agentRes.ok) {
-      if (agentRes.cancelled) {
+    let stepDone = false;
+    for (let i = 0; i < MAX_STEP_CYCLES && !stepDone; i++) {
+      // Allow cancel between cycles
+      if (ui?.shouldCancel && ui.shouldCancel()) {
         if (ui?.onLog) ui.onLog('Execution cancelled by user.');
         return { ok: false, error: 'cancelled' };
       }
-      // Fallback: execute the very next task directly using the classic path
-      const nextTask = remaining()[0];
-      if (!nextTask) break;
-      const res = await execTask(nextTask, { session, models, options, ui });
-      if (!res.ok) {
-        appendEvent(session, { type: 'task_failed', message: nextTask.title, error: res.error });
-        return { ok: false, error: res.error };
-      }
-      done.add(nextTask.id);
-      upsertTask(session, { ...nextTask, status: 'done' });
-    } else {
-      // Mark completed by ID if supplied
-      for (const tid of agentRes.completedTasks || []) {
-        if (byId.has(tid)) {
-          done.add(tid);
-          upsertTask(session, { ...byId.get(tid), status: 'done' });
-        }
-      }
 
-      // Heuristic: if agent executed actions but no completedTasks, advance one item
-      if ((!agentRes.completedTasks || agentRes.completedTasks.length === 0) && remaining().length > 0) {
-        // Mark the first pending as progressed when actions ran
-        done.add(remaining()[0].id);
-        upsertTask(session, { ...remaining()[0], status: 'done' });
+      const agentRes = await runProAgentCycle({ userGoal, plan: [task], session, models, options, ui });
+      if (!agentRes.ok) {
+        // Fallback to classic executor for this task
+        const res = await execTask(task, { session, models, options, ui });
+        if (!res.ok) {
+          appendEvent(session, { type: 'task_failed', message: task.title, error: res.error });
+          return { ok: false, error: res.error };
+        }
+        stepDone = true;
+        break;
       }
 
       if (agentRes.next === 'cancel') {
         if (ui?.onLog) ui.onLog('Agent requested cancel.');
         return { ok: false, error: 'cancelled' };
       }
+      if (agentRes.next === 'ask_user') {
+        if (ui?.onLog) ui.onLog('Agent needs user input to proceed.');
+        return { ok: false, error: 'user_input_required' };
+      }
+      if (agentRes.complete) {
+        // Mark task done and show final result if provided
+        if (ui?.onTaskSuccess) ui.onTaskSuccess(task, agentRes.final); else taskSuccess(task);
+        stepDone = true;
+        break;
+      }
+      // Otherwise continue another cycle to observe outputs and act again
     }
 
-    // After each cycle, check for new user inputs to adjust the plan
+    if (!stepDone) {
+      // Defensive: avoid infinite loops
+      if (ui?.onLog) ui.onLog(chalk.yellow(`Max cycles reached for ${task.id}. Marking as done.`));
+      if (ui?.onTaskSuccess) ui.onTaskSuccess(task); else taskSuccess(task);
+    }
+
+    // Update session task state
+    upsertTask(session, { ...task, status: 'done' });
+
+    // After each step, check for queued user inputs to adjust or cancel
     const queued = typeof ui?.drainQueuedInputs === 'function' ? ui.drainQueuedInputs() : [];
     if (queued && queued.length > 0) {
       const adjustPrompt = planAdjustPrompt({ goal: userGoal, currentPlan: plan.filter((t) => !t.hidden), queuedInputs: queued });
@@ -274,15 +278,11 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
         return { ok: false, error: 'cancelled' };
       }
       if (parsed.action === 'update' && Array.isArray(parsed.tasks)) {
-        // Replace plan with new tasks + append closeout
-        const newPlan = parsed.tasks.concat(plan.find((t) => t.type === 'session_close') || []);
-        plan = newPlan;
-        // Rebuild maps and preserve done where possible
-        byId.clear();
-        for (const t of plan) byId.set(t.id, t);
-        // If any tasks were removed, ignore their done state
-        if (ui?.onPlan) ui.onPlan(plan);
-        else printTaskList(plan);
+        // Replace remaining plan and restart execution from the new plan
+        const closeTask = plan.find((p) => p.type === 'session_close');
+        plan = parsed.tasks.concat(closeTask ? [closeTask] : []);
+        // Reset state for next tasks
+        if (ui?.onPlan) ui.onPlan(plan); else printTaskList(plan);
       }
     }
   }
