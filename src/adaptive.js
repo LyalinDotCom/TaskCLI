@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { runCommand } from './tools/shell.js';
+import { withUICancel } from './utils/cancel.js';
 
 function detectInteractive(stdout, stderr) {
   const text = (stdout || '') + '\n' + (stderr || '');

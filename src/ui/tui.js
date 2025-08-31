@@ -28,7 +28,6 @@ function headerBanner(version) {
     Box,
     { flexDirection: 'column' },
     h(Box, null, gradientText(line)),
-    h(Box, { marginTop: 1 }, h(Text, { color: 'gray' }, 'Tips: 1) Be specific  2) Ask to edit/run  3) Press Esc Esc to cancel')),
   );
 }
 
@@ -90,6 +89,8 @@ export function App({ session, models, initialInput, options }) {
   const [progressText, setProgressText] = React.useState('Idle');
   const [bannerText, setBannerText] = React.useState('');
   const [bannerColor, setBannerColor] = React.useState('yellow');
+  const [modelBusy, setModelBusy] = React.useState(false);
+  const [modelName, setModelName] = React.useState('');
   const [canceling, setCanceling] = React.useState(false);
   const HISTORY_MAX = Number(process.env.TASKCLI_HISTORY_SIZE || 20);
   const [history, setHistory] = React.useState([]);
@@ -144,8 +145,6 @@ export function App({ session, models, initialInput, options }) {
         // Clear input when idle
         if (inputStateRef.current && inputStateRef.current.length > 0) {
           setInput('');
-          setBannerText('Input cleared');
-          setBannerColor('gray');
           return;
         }
         // If already empty, do nothing
@@ -162,8 +161,6 @@ export function App({ session, models, initialInput, options }) {
         try { if (typeof killRef.current === 'function') killRef.current(); } catch {}
       } else {
         setLastEscAt(now);
-        setBannerText('Press Esc again to cancel…');
-        setBannerColor('yellow');
       }
       return;
     }
@@ -306,6 +303,8 @@ export function App({ session, models, initialInput, options }) {
       setCanceling(false);
     },
     onRegisterKill: (fn) => { killRef.current = fn || null; if (!fn) setCanceling(false); },
+    onModelStart: (name) => { setModelBusy(true); setModelName(String(name || 'model')); },
+    onModelEnd: () => { setModelBusy(false); setModelName(''); },
     onComplete: (count) => appendMessage({ role: 'agent', text: `Completed ${count} tasks.` }),
     shouldCancel: () => !!cancelRequested,
     drainQueuedInputs: () => {
@@ -417,10 +416,7 @@ export function App({ session, models, initialInput, options }) {
       h(Text, { color: 'cyan' }, progressText || 'Ready'),
       canceling
         ? h(Text, { color: 'red' }, h(Spinner), ' Cancelling...')
-        : (bannerText
-            ? h(Text, { color: bannerColor }, bannerText)
-            : h(Text, { color: 'gray' }, `${tildePath(session?.meta?.cwd || process.cwd())}  |  ${session?.meta?.proModel || ''}`)
-          ),
+        : (modelBusy ? h(Text, { color: 'gray' }, h(Spinner), ` ${modelName}`) : h(Text, null, '')),
     ),
   );
 }

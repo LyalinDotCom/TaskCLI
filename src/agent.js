@@ -8,6 +8,7 @@ import { smartRunCommand } from './adaptive.js';
 import { webSearch } from './tools/search.js';
 import { appendEvent } from './session.js';
 import { codeGenPrompt, editFilePrompt } from './prompts.js';
+import { withUICancel } from './utils/cancel.js';
 
 function safeParseJSON(text) {
   try {
@@ -89,12 +90,14 @@ async function execAction(action, ctx) {
       case 'write_file': {
         let content = action.content;
         if (!content && action.content_prompt) {
+          if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
           const code = await withUICancel(ui, (signal) => models.generateProWithContext(
             codeGenPrompt({ instruction: action.content_prompt, context: `Path: ${action.path}` }),
             session,
             0.2,
             { signal },
           ));
+          if (ui?.onModelEnd) ui.onModelEnd();
           content = code;
         }
         if (!content) throw new Error('No content provided for write_file');
@@ -105,12 +108,14 @@ async function execAction(action, ctx) {
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
+        if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
         const code = await withUICancel(ui, (signal) => models.generateProWithContext(
           codeGenPrompt({ instruction: action.prompt, context: `Path: ${action.path}` }),
           session,
           0.2,
           { signal },
         ));
+        if (ui?.onModelEnd) ui.onModelEnd();
         await writeFs(cwd, action.path, code);
         appendEvent(session, { type: 'write_file', summary: `Generated ${action.path}` });
         if (ui?.onLog) ui.onLog(`Generated file: ${action.path} (${code.length} bytes)`);
@@ -119,12 +124,14 @@ async function execAction(action, ctx) {
       }
       case 'edit_file': {
         const current = await readFs(cwd, action.path);
+        if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
         const updated = await withUICancel(ui, (signal) => models.generateProWithContext(
           editFilePrompt({ filepath: action.path, currentContent: current.content, instruction: action.instruction, context: '' }),
           session,
           0.2,
           { signal },
         ));
+        if (ui?.onModelEnd) ui.onModelEnd();
         await writeFs(cwd, action.path, updated);
         appendEvent(session, { type: 'edit_file', summary: `Edited ${action.path}` });
         if (ui?.onLog) ui.onLog(`Edited file: ${action.path} (${updated.length} bytes)`);
@@ -191,7 +198,13 @@ export async function runProAgentCycle({ userGoal, plan, session, models, option
   }
 
   const prompt = buildAgentPrompt({ userGoal, plan, cwd: session.meta.cwd });
-  const text = await withUICancel(ui, (signal) => models.generateProWithContext(prompt, session, 0.2, { signal }));
+  if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+  let text;
+  try {
+    text = await withUICancel(ui, (signal) => models.generateProWithContext(prompt, session, 0.2, { signal }));
+  } finally {
+    if (ui?.onModelEnd) ui.onModelEnd();
+  }
   const parsed = safeParseJSON(text);
   if (!parsed || !Array.isArray(parsed.actions)) {
     if (ui?.onLog) ui.onLog('Agent did not return valid JSON actions.');
