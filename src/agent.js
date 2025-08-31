@@ -72,15 +72,35 @@ function buildAgentPrompt({ userGoal, plan, cwd, previousAttempts = [], lastErro
     attemptHistory = `\n\nPREVIOUS ATTEMPTS (avoid repeating failures):\n${previousAttempts.map((a, i) => `${i+1}. ${a}`).join('\n')}`;
   }
 
-  return `You are the Gemini Pro execution agent for TaskCLI. Your ONLY job is to complete the SPECIFIC TASK shown below. Do not attempt other tasks.
+  // Map task types to their corresponding action types
+  let taskInstructions = '';
+  if (taskDetail) {
+    switch(taskDetail.type) {
+      case 'generate_file_from_prompt':
+        taskInstructions = `\n\nTASK MAPPING: Use action type "generate_file_from_prompt" with path: "${taskDetail.path}" and prompt: "${taskDetail.prompt}"`;
+        break;
+      case 'run_command':
+        taskInstructions = `\n\nTASK MAPPING: Use action type "run_command" with command: "${taskDetail.command}"`;
+        break;
+      case 'write_file':
+        taskInstructions = `\n\nTASK MAPPING: Use action type "write_file" with path: "${taskDetail.path}" and content or content_prompt`;
+        break;
+      case 'read_file':
+        taskInstructions = `\n\nTASK MAPPING: Use action type "read_file" with path: "${taskDetail.path}"`;
+        break;
+      case 'edit_file':
+        taskInstructions = `\n\nTASK MAPPING: Use action type "edit_file" with path: "${taskDetail.path}" and instruction: "${taskDetail.instruction}"`;
+        break;
+    }
+  }
+
+  return `You are the Gemini Pro execution agent for TaskCLI. Your ONLY job is to complete the SPECIFIC TASK shown below using the EXACT action type that matches.
 
 IMPORTANT RULES:
-1. ONLY work on the current task - do not read random files or explore
-2. If the task is "run_command", execute ONLY that command
-3. If the task is "generate_file_from_prompt", generate ONLY that file
-4. For file operations, verify the path exists before reading
-5. Complete the task fully before marking it done
-6. If you need to explore files, use 'ls' or 'find' commands first
+1. ONLY work on the current task - do not explore or read other files
+2. Use the EXACT action type that matches the task type
+3. Complete the task in ONE action, then mark it complete
+4. Set "complete": true and "next": "done" after executing the task action
 
 GOAL
 ${userGoal}
@@ -89,12 +109,14 @@ WORKING DIR
 ${cwd}
 
 CURRENT TASK (complete ONLY this)
-${JSON.stringify(taskDetail, null, 2)}${errorContext}${attemptHistory}
+${JSON.stringify(taskDetail, null, 2)}${taskInstructions}${errorContext}${attemptHistory}
 
 CONTROL SPEC
 ${toolSpec()}
 
-Remember: Focus ONLY on completing the current task. Do not explore or read files unless that IS the task.
+EXAMPLE RESPONSE for generate_file_from_prompt task:
+{"speak":["Generating summary file..."],"actions":[{"type":"generate_file_from_prompt","path":"summary.md","prompt":"Create a summary"}],"completedTasks":["T3"],"next":"done","complete":true}
+
 Output strictly JSON with no commentary.`;
 }
 

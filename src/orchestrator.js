@@ -271,8 +271,9 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
         return { ok: false, error: 'cancelled' };
       }
 
-      // If this is a simple run_command task, just execute it directly
-      if (task.type === 'run_command' && task.command) {
+      // For simple tasks that don't need agent reasoning, execute directly
+      const directExecuteTasks = ['run_command', 'read_file', 'write_file', 'generate_file_from_prompt', 'edit_file', 'search_web'];
+      if (directExecuteTasks.includes(task.type)) {
         const simpleRes = await execTask(task, { session, models, options, ui });
         if (simpleRes.ok) {
           stepDone = true;
@@ -280,6 +281,14 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
         } else {
           lastError = simpleRes.error;
           attemptHistory.push(`Direct execution failed: ${simpleRes.error}`);
+          // For these task types, don't try agent cycle - just fail after max attempts
+          consecutiveFailures++;
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            if (ui?.onLog) ui.onLog(`Task failed after ${MAX_CONSECUTIVE_FAILURES} attempts.`);
+            stepDone = true;
+            break;
+          }
+          continue;
         }
       }
 
