@@ -8,7 +8,7 @@ Overview
 
 Setup
 1) From repo root, ensure Flash’s Genkit is built (already bundled in this repo)
-2) In `TaskCLI/`, copy `.env.example` to `.env` and set `GOOGLE_GENAI_API_KEY`
+2) In `TaskCLI/`, copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)
 
 Install
 ```bash

@@ -62,3 +62,28 @@ OUTPUT
 - Return only the full updated file content. No comments or fences.`;
 }
 
+export function stuckAnalysisPrompt(context) {
+  return `You are the planning brain (Gemini Flash). Determine if a command run was interactive, failed, or stuck, and give a concise hint.
+
+Return JSON only: {"status":"interactive|error|stuck","summary":"...","hint":"..."}
+
+Context:
+${JSON.stringify(context, null, 2)}`;
+}
+
+export function retryCommandPrompt(payload) {
+  return `You are the coding/execution brain (Gemini Pro). Given command context and a brief assessment, propose a precise next step.
+
+Return JSON only. One of:
+{"action":"run","commands":["..."],"note":"..."}
+{"action":"ask_user","question":"..."}
+{"action":"abort","note":"..."}
+
+Rules:
+- Prefer non-interactive flags (e.g., --yes/--no-*, --force) and CI-friendly settings.
+- Use explicit flags for popular tools (e.g., create-next-app: --turbopack/--no-turbopack, --tailwind/--no-tailwind etc.).
+- If critical info is missing, ask user.
+
+Input:
+${JSON.stringify(payload, null, 2)}`;
+}

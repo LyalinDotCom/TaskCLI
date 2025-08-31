@@ -71,12 +71,22 @@ export function App({ session, models, initialInput, options }) {
     setCmdLog('');
     setMessages((m) => [...m, { role: 'user', text: goal }]);
     try {
-      await orchestrate({ userGoal: goal, models, session, options, ui });
+      const res = await orchestrate({ userGoal: goal, models, session, options, ui });
+      if (!res.ok) {
+        setMessages((m) => [...m, { role: 'executor', text: `Error: ${res.error}` }]);
+      }
       saveSession(session);
     } finally {
       setBusy(false);
     }
   }
+
+  React.useEffect(() => {
+    if (initialInput && initialInput.trim()) {
+      runOrchestrator(initialInput.trim());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return h(
     Box,

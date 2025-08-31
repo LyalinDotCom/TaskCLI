@@ -12,7 +12,21 @@ import { startTUI } from './ui/tui.js';
 function loadEnv() {
   const cwd = process.cwd();
   const envPath = path.join(cwd, '.env');
-  dotenv.config({ path: fs.existsSync(envPath) ? envPath : undefined });
+  let loaded = false;
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    loaded = true;
+  }
+  if (!loaded) {
+    // Try TaskCLI/.env relative to this file
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const candidate = path.resolve(here, '..', '.env');
+    if (fs.existsSync(candidate)) {
+      dotenv.config({ path: candidate });
+      loaded = true;
+    }
+  }
+  if (!loaded) dotenv.config();
 }
 
 function parseArgs(argv) {
@@ -46,7 +60,7 @@ function printHelp() {
     `  --cwd PATH          Working directory for tasks\n` +
     `  -h, --help          Show help\n\n` +
     `Env:\n` +
-    `  GOOGLE_GENAI_API_KEY or GEMINI_API_KEY   Google AI key (Genkit)\n` +
+    `  GEMINI_API_KEY or GOOGLE_API_KEY         Google AI key (Genkit)\n` +
     `  FLASH_MODEL, PRO_MODEL                   Override defaults\n`);
 }
 
@@ -56,8 +70,8 @@ export async function main() {
   if (args.help) { printHelp(); return; }
   printHeader();
 
-  if (!process.env.GOOGLE_GENAI_API_KEY && !process.env.GEMINI_API_KEY) {
-    console.log(chalk.yellow('Warning: GOOGLE_GENAI_API_KEY or GEMINI_API_KEY is not set. Model calls will fail.'));
+  if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {
+    console.log(chalk.yellow('Warning: GEMINI_API_KEY or GOOGLE_API_KEY is not set. Model calls will fail.'));
   }
 
   // Prepare session

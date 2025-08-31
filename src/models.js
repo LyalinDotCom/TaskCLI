@@ -1,6 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { stuckAnalysisPrompt, retryCommandPrompt } from './prompts.js';
 
 // Lightweight bridge to Flash's Genkit build
 async function importFlashGenkit() {
@@ -33,5 +34,15 @@ export async function loadModels({ flashModel, proModel }) {
     return text;
   }
 
-  return { generateWithFlash, generateWithPro };
+  async function analyzeStuck(context) {
+    const prompt = stuckAnalysisPrompt(context);
+    return await generateWithFlash(prompt, 0.2);
+  }
+
+  async function planRetry(payload) {
+    const prompt = retryCommandPrompt(payload);
+    return await generateWithPro(prompt, 0.2);
+  }
+
+  return { generateWithFlash, generateWithPro, analyzeStuck, planRetry };
 }

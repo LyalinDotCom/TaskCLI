@@ -3,6 +3,7 @@ import { planningPrompt, codeGenPrompt, editFilePrompt } from './prompts.js';
 import { appendEvent, summarizeMemory, upsertTask } from './session.js';
 import { writeFile as writeFs, readFile as readFs } from './tools/fs.js';
 import { runCommand } from './tools/shell.js';
+import { smartRunCommand } from './adaptive.js';
 import { webSearch } from './tools/search.js';
 import { printTaskList, startTask, taskSuccess, taskFailure } from './ui.js';
 
@@ -20,6 +21,7 @@ function safeParseJSON(text) {
 async function planTasks({ userGoal, models, session, ui }) {
   const memorySummary = summarizeMemory(session);
   const prompt = planningPrompt({ goal: userGoal, memorySummary, cwd: session.meta.cwd });
+  if (ui?.onLog) ui.onLog('🧠 Planning with Gemini Flash...');
   const text = await models.generateWithFlash(prompt, 0.3);
   const parsed = safeParseJSON(text);
   if (!parsed || !Array.isArray(parsed.tasks)) {
@@ -84,11 +86,7 @@ async function execTask(task, ctx) {
           console.log(chalk.yellow(`About to run: ${task.command}`));
           console.log(chalk.gray('Use --yes to auto-confirm in the future.'));
         }
-        const res = await runCommand(task.command, {
-          cwd,
-          onStdout: ctx.ui?.onCommandOut,
-          onStderr: ctx.ui?.onCommandErr,
-        });
+        const res = await smartRunCommand({ command: task.command, cwd, ui: ctx.ui, models, options });
         appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}` });
         if (!res.ok) throw new Error(res.error || 'Command failed');
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
@@ -122,7 +120,8 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
     tasks = await planTasks({ userGoal, models, session, ui });
   } catch (e) {
     appendEvent(session, { type: 'plan_error', message: String(e) });
-    console.log(chalk.red('Planning failed: ') + String(e?.message || e));
+    if (ui?.onLog) ui.onLog(chalk.red('Planning failed: ') + String(e?.message || e));
+    else console.log(chalk.red('Planning failed: ') + String(e?.message || e));
     return { ok: false, error: e?.message || String(e) };
   }
 
