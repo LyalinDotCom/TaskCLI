@@ -259,6 +259,11 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
     if (ui?.onTaskStart) ui.onTaskStart(task); else startTask(task);
 
     let stepDone = false;
+    const attemptHistory = [];
+    let lastError = null;
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3;
+
     for (let i = 0; i < MAX_STEP_CYCLES && !stepDone; i++) {
       // Allow cancel between cycles
       if (ui?.shouldCancel && ui.shouldCancel()) {
@@ -266,16 +271,63 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
         return { ok: false, error: 'cancelled' };
       }
 
-      const agentRes = await runProAgentCycle({ userGoal, plan: [task], session, models, options, ui });
+      // If this is a simple run_command task, just execute it directly
+      if (task.type === 'run_command' && task.command) {
+        const simpleRes = await execTask(task, { session, models, options, ui });
+        if (simpleRes.ok) {
+          stepDone = true;
+          break;
+        } else {
+          lastError = simpleRes.error;
+          attemptHistory.push(`Direct execution failed: ${simpleRes.error}`);
+        }
+      }
+
+      const agentRes = await runProAgentCycle({ 
+        userGoal, 
+        plan: [task], 
+        session, 
+        models, 
+        options, 
+        ui,
+        previousAttempts: attemptHistory.slice(-3), // Only pass last 3 attempts
+        lastError 
+      });
+      
       if (!agentRes.ok) {
         if (agentRes.cancelled) {
           if (ui?.onLog) ui.onLog('Execution cancelled by user.');
           return { ok: false, error: 'cancelled' };
         }
-        // No valid agent plan; try another cycle (allow model to replan)
-        if (ui?.onLog) ui.onLog('Agent plan invalid. Retrying this step...');
+        
+        // Track the failure
+        lastError = agentRes.error;
+        const failureDetail = agentRes.executedActions ? 
+          agentRes.executedActions.map(a => `${a.action}: ${a.success ? 'ok' : a.error}`).join(', ') :
+          agentRes.error;
+        attemptHistory.push(failureDetail);
+        consecutiveFailures++;
+        
+        // If we've failed too many times with the same error, bail out
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          if (ui?.onLog) ui.onLog(`Task failed after ${MAX_CONSECUTIVE_FAILURES} consecutive failures. Moving on.`);
+          stepDone = true;
+          break;
+        }
+        
+        // Provide better feedback about what went wrong
+        if (agentRes.invalidResponse) {
+          if (ui?.onLog) ui.onLog('Agent returned invalid JSON. Retrying with clearer instructions...');
+        } else if (agentRes.error && agentRes.error.includes('ENOENT')) {
+          if (ui?.onLog) ui.onLog('File not found. Agent will try a different approach...');
+        } else {
+          if (ui?.onLog) ui.onLog(`Agent attempt failed: ${agentRes.error}. Retrying...`);
+        }
         continue;
       }
+      
+      // Reset consecutive failures on success
+      consecutiveFailures = 0;
 
       if (agentRes.next === 'cancel') {
         if (ui?.onLog) ui.onLog('Agent requested cancel.');

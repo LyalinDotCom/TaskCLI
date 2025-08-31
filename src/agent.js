@@ -49,12 +49,38 @@ Rules:
 - If all work appears complete, set next="done" and include a brief recap in speak[].`;
 }
 
-function buildAgentPrompt({ userGoal, plan, cwd }) {
-  const planSnapshot = (plan || [])
-    .filter((t) => t && !t.hidden && t.type !== 'session_close')
-    .map((t) => ({ id: t.id, type: t.type, title: t.title, rationale: t.rationale, path: t.path, command: t.command }))
-    ;
-  return `You are the Gemini Pro execution agent for TaskCLI. Focus on completing the current step end-to-end. You may need multiple cycles: run tools, observe output, then decide if more tool use is needed. Only mark complete when the user's step is fully satisfied.
+function buildAgentPrompt({ userGoal, plan, cwd, previousAttempts = [], lastError = null }) {
+  const currentTask = plan?.[0];
+  const taskDetail = currentTask ? {
+    id: currentTask.id,
+    type: currentTask.type,
+    title: currentTask.title,
+    rationale: currentTask.rationale,
+    path: currentTask.path,
+    command: currentTask.command,
+    prompt: currentTask.prompt,
+    instruction: currentTask.instruction
+  } : null;
+
+  let errorContext = '';
+  if (lastError) {
+    errorContext = `\n\nLAST ATTEMPT FAILED\nError: ${lastError}\nAvoid repeating the same failing action. Try a different approach or verify prerequisites first.`;
+  }
+
+  let attemptHistory = '';
+  if (previousAttempts.length > 0) {
+    attemptHistory = `\n\nPREVIOUS ATTEMPTS (avoid repeating failures):\n${previousAttempts.map((a, i) => `${i+1}. ${a}`).join('\n')}`;
+  }
+
+  return `You are the Gemini Pro execution agent for TaskCLI. Your ONLY job is to complete the SPECIFIC TASK shown below. Do not attempt other tasks.
+
+IMPORTANT RULES:
+1. ONLY work on the current task - do not read random files or explore
+2. If the task is "run_command", execute ONLY that command
+3. If the task is "generate_file_from_prompt", generate ONLY that file
+4. For file operations, verify the path exists before reading
+5. Complete the task fully before marking it done
+6. If you need to explore files, use 'ls' or 'find' commands first
 
 GOAL
 ${userGoal}
@@ -62,15 +88,13 @@ ${userGoal}
 WORKING DIR
 ${cwd}
 
-CURRENT PLAN (pending only)
-${JSON.stringify(planSnapshot, null, 2)}
-
-FOCUS STEP (complete this one now)
-${JSON.stringify({ id: plan?.[0]?.id, type: plan?.[0]?.type, title: plan?.[0]?.title, rationale: plan?.[0]?.rationale, path: plan?.[0]?.path, command: plan?.[0]?.command }, null, 2)}
+CURRENT TASK (complete ONLY this)
+${JSON.stringify(taskDetail, null, 2)}${errorContext}${attemptHistory}
 
 CONTROL SPEC
 ${toolSpec()}
 
+Remember: Focus ONLY on completing the current task. Do not explore or read files unless that IS the task.
 Output strictly JSON with no commentary.`;
 }
 
@@ -167,7 +191,7 @@ async function execAction(action, ctx) {
   }
 }
 
-export async function runProAgentCycle({ userGoal, plan, session, models, options = {}, ui, maxActions = 5 }) {
+export async function runProAgentCycle({ userGoal, plan, session, models, options = {}, ui, maxActions = 5, previousAttempts = [], lastError = null }) {
   // Early cancellation check
   if (ui?.shouldCancel && ui.shouldCancel()) {
     return { ok: false, cancelled: true };
@@ -197,7 +221,7 @@ export async function runProAgentCycle({ userGoal, plan, session, models, option
     return { ok: true, completedTasks: canned.completedTasks, next: canned.next };
   }
 
-  const prompt = buildAgentPrompt({ userGoal, plan, cwd: session.meta.cwd });
+  const prompt = buildAgentPrompt({ userGoal, plan, cwd: session.meta.cwd, previousAttempts, lastError });
   if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
   let text;
   try {
@@ -208,21 +232,26 @@ export async function runProAgentCycle({ userGoal, plan, session, models, option
   const parsed = safeParseJSON(text);
   if (!parsed || !Array.isArray(parsed.actions)) {
     if (ui?.onLog) ui.onLog('Agent did not return valid JSON actions.');
-    return { ok: false, error: 'invalid_agent_json' };
+    return { ok: false, error: 'invalid_agent_json', invalidResponse: text };
   }
   const speak = Array.isArray(parsed.speak) ? parsed.speak : [];
   for (const line of speak) ui?.onLog?.(line);
 
   let execCount = 0;
+  const executedActions = [];
   for (const action of parsed.actions.slice(0, maxActions)) {
     if (ui?.shouldCancel && ui.shouldCancel()) return { ok: false, cancelled: true };
     const r = await execAction(action, { session, models, options, ui });
-    if (!r.ok) return { ok: false, error: r.error || 'Action failed' };
+    executedActions.push({ action: action.type, success: r.ok, error: r.error });
+    if (!r.ok) {
+      // Don't immediately fail - let the orchestrator retry with context
+      return { ok: false, error: r.error || 'Action failed', executedActions };
+    }
     execCount++;
   }
 
   const next = parsed.next || 'continue';
   const complete = !!parsed.complete || next === 'done';
   const final = typeof parsed.final === 'string' ? parsed.final : undefined;
-  return { ok: true, next, complete, final, completedTasks: Array.isArray(parsed.completedTasks) ? parsed.completedTasks : [], planUpdates: parsed.planUpdates };
+  return { ok: true, next, complete, final, completedTasks: Array.isArray(parsed.completedTasks) ? parsed.completedTasks : [], planUpdates: parsed.planUpdates, executedActions };
 }

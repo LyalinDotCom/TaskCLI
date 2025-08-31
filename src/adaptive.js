@@ -75,14 +75,19 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
   };
   const analysisPrompt = `You are the planning brain (Gemini Flash) helping a CLI detect issues when running commands. Classify the situation and suggest a strategy.
 Return compact JSON only:
-{"status":"interactive|error|stuck","summary":"...","hint":"short tip"}`;
+{"status":"interactive|error|stuck","summary":"...","hint":"short tip","isRecoverable":true|false}`;
   const analysisText = await models.generateWithFlash(
     `${analysisPrompt}\n\nContext:\n${JSON.stringify(context, null, 2)}`,
     0.2,
   );
   let classification;
   try { classification = JSON.parse(analysisText.replace(/^[^\{]*/,'').replace(/\}[^\}]*$/,'}')); } catch {}
-  if (classification && ui?.onLog) ui.onLog(`Flash says: ${classification.status || 'unknown'} - ${classification.summary || ''}`);
+  if (classification && ui?.onLog) {
+    ui.onLog(`Flash says: ${classification.status || 'unknown'} - ${classification.summary || ''}`);
+    if (classification.isRecoverable === false) {
+      return { ok: false, error: classification.summary || 'Non-recoverable error', stdout: res.stdout, stderr: res.stderr };
+    }
+  }
 
   // Ask Pro to craft next step
   const retryPrompt = `You are the coding/execution brain (Gemini Pro). Given the command context and Flash assessment, propose the next step.
@@ -121,8 +126,12 @@ Rules:
   }
   if (retry.action === 'run') {
     const cmds = Array.isArray(retry.commands) ? retry.commands : [String(retry.commands || '')];
-    if (ui?.onLog && retry.note) ui.onLog(retry.note);
+    if (ui?.onLog && retry.note) ui.onLog(`Retry strategy: ${retry.note}`);
+    
+    let allStdout = '';
+    let allStderr = '';
     for (const cmd of cmds) {
+      if (ui?.onLog) ui.onLog(chalk.gray(`Running: ${cmd}`));
       if (ui?.onCommandStart) ui.onCommandStart(cmd);
       const again = await runCommand(cmd, {
         cwd,
@@ -132,12 +141,14 @@ Rules:
         idleTimeoutMs: 15000,
         timeoutMs: 15 * 60 * 1000,
       });
+      allStdout += (again.stdout || '');
+      allStderr += (again.stderr || '');
       if (ui?.onCommandDone) ui.onCommandDone({ code: again.code ?? 0, ok: !!again.ok });
       if (!again.ok) {
-        return { ok: false, error: again.error || 'Retry failed', stdout: again.stdout, stderr: again.stderr };
+        return { ok: false, error: again.error || 'Retry failed', stdout: allStdout, stderr: allStderr };
       }
     }
-    return { ok: true };
+    return { ok: true, stdout: allStdout, stderr: allStderr };
   }
 
   return { ok: false, error: 'Unknown retry action', stdout: res.stdout, stderr: res.stderr };

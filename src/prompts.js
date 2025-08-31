@@ -19,6 +19,7 @@ REQUIREMENTS
 - If code/content must be generated, do NOT inline it here. Provide a concise 'content_prompt' or 'prompt' that the Pro model will use to generate high-quality code.
 - Use relative paths under the working dir. Ensure parent folders exist implicitly.
 - Always include a short title and rationale for each task.
+- For exploration tasks, use explicit commands like 'ls -la' or 'find . -type f -name "*.js"' instead of expecting the agent to read non-existent files.
 
 CLARIFICATION POLICY (IMPORTANT)
 - Only use ask_user when the goal is severely vague/ambiguous or missing critical decisions that materially change the plan.
@@ -32,9 +33,9 @@ ${goal}
 
 Return JSON only, like:
 {"tasks":[
-  {"id":"T1","type":"run_command","title":"Init project","rationale":"Bootstrap Node app","command":"npm init -y"},
-  {"id":"T2","type":"write_file","title":"Create README","rationale":"Docs","path":"README.md","content_prompt":"Write concise usage and setup for TaskCLI"},
-  {"id":"T3","type":"generate_file_from_prompt","title":"Main module","rationale":"Core logic","path":"src/index.js","prompt":"Implement X with Y interfaces"}
+  {"id":"T1","type":"run_command","title":"List directory contents","rationale":"Explore project structure","command":"ls -la"},
+  {"id":"T2","type":"run_command","title":"Find all JS files","rationale":"Locate JavaScript code","command":"find . -type f -name \"*.js\" | head -20"},
+  {"id":"T3","type":"generate_file_from_prompt","title":"Summarize findings","rationale":"Document discovered projects","path":"project-summary.md","prompt":"Based on the file listing from previous steps, create a markdown summary of the projects found"}
 ]}
 
 If the goal is severely vague, return:
@@ -54,6 +55,8 @@ ${instruction}
 
 CONTEXT
 ${context || 'N/A'}
+
+IMPORTANT: Use only information that has been explicitly provided. Do not assume files exist unless they were shown in previous command outputs.
 
 OUTPUT
 - Return only the final code content. No markdown fences, no commentary.`;
