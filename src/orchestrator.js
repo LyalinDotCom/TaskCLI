@@ -28,18 +28,26 @@ async function planTasks({ userGoal, models, session, ui }) {
     throw new Error('Planner did not return valid JSON task list.');
   }
   if (ui?.onPlan) ui.onPlan(parsed.tasks);
+  if (ui?.onLog) {
+    ui.onLog(`Tasks created (${parsed.tasks.length}):`);
+    for (const t of parsed.tasks) {
+      ui.onLog(` - ${t.id} ${t.title} [${t.type}]${t.rationale ? ` — ${t.rationale}` : ''}`);
+    }
+  }
   return parsed.tasks;
 }
 
 async function execTask(task, ctx) {
   const { session, models, options } = ctx;
   if (ctx.ui?.onTaskStart) ctx.ui.onTaskStart(task);
+  if (ctx.ui?.onLog) ctx.ui.onLog(`Starting task ${task.id}: ${task.title} [${task.type}]`);
   else startTask(task);
   try {
     switch (task.type) {
       case 'read_file': {
         const res = await readFs(session.meta.cwd, task.path);
         appendEvent(session, { type: 'read_file', summary: `Read ${task.path}` });
+        if (ctx.ui?.onLog) ctx.ui.onLog(`Read file: ${task.path} (${res.content.length} bytes)`);
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, res.content);
         else taskSuccess(task);
         return { ok: true, data: res.content };
@@ -53,6 +61,7 @@ async function execTask(task, ctx) {
         if (!content) throw new Error('No content to write.');
         await writeFs(session.meta.cwd, task.path, content);
         appendEvent(session, { type: 'write_file', summary: `Wrote ${task.path}` });
+        if (ctx.ui?.onLog) ctx.ui.onLog(`Wrote file: ${task.path} (${content.length} bytes)`);
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
         else taskSuccess(task);
         return { ok: true };
@@ -61,6 +70,7 @@ async function execTask(task, ctx) {
         const code = await models.generateWithPro(codeGenPrompt({ instruction: task.prompt, context: `Path: ${task.path}` }));
         await writeFs(session.meta.cwd, task.path, code);
         appendEvent(session, { type: 'write_file', summary: `Generated ${task.path}` });
+        if (ctx.ui?.onLog) ctx.ui.onLog(`Generated file: ${task.path} (${code.length} bytes)`);
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
         else taskSuccess(task);
         return { ok: true };
@@ -72,6 +82,7 @@ async function execTask(task, ctx) {
         );
         await writeFs(session.meta.cwd, task.path, updated);
         appendEvent(session, { type: 'edit_file', summary: `Edited ${task.path}` });
+        if (ctx.ui?.onLog) ctx.ui.onLog(`Edited file: ${task.path} (${updated.length} bytes)`);
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
         else taskSuccess(task);
         return { ok: true };
@@ -99,6 +110,10 @@ async function execTask(task, ctx) {
         const res = await webSearch(q, {});
         const top = res.results.slice(0, num);
         appendEvent(session, { type: 'search_web', summary: `Searched: ${q}` });
+        if (ctx.ui?.onLog) {
+          ctx.ui.onLog(`Search results for: ${q}`);
+          for (const r of top) ctx.ui.onLog(` - ${r.title} (${r.url})`);
+        }
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, top);
         else taskSuccess(task);
         return { ok: true, data: top };

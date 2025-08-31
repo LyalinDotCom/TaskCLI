@@ -8,6 +8,7 @@ import { loadModels } from './models.js';
 import { ensureSessionDir, newSession, saveSession } from './session.js';
 import { printHeader } from './ui.js';
 import { startTUI } from './ui/tui.js';
+import { runDoctor } from './doctor.js';
 
 function loadEnv() {
   const cwd = process.cwd();
@@ -36,6 +37,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '-i' || a === '--interactive') args.interactive = true;
     else if (a === '--headless' || a === '--no-ui') { args.headless = true; args.interactive = false; }
+    else if (a === '--doctor') args.doctor = true;
     else if (a === '--yes' || a === '-y') args.yes = true;
     else if ((a === '--flash-model' || a === '--flash') && argv[i + 1]) { args.flashModel = argv[++i]; }
     else if ((a === '--pro-model' || a === '--pro') && argv[i + 1]) { args.proModel = argv[++i]; }
@@ -54,6 +56,7 @@ function printHelp() {
     `Options:\n` +
     `  -i, --interactive   Interactive multi-turn UI (default)\n` +
     `      --headless      Run without UI (command-line mode)\n` +
+    `      --doctor       Run environment checks\n` +
     `  -y, --yes           Auto-confirm shell commands\n` +
     `  --flash-model NAME  Model for planning (default: gemini-2.5-flash)\n` +
     `  --pro-model NAME    Model for execution (default: gemini-1.5-pro)\n` +
@@ -68,6 +71,7 @@ export async function main() {
   loadEnv();
   const args = parseArgs(process.argv.slice(2));
   if (args.help) { printHelp(); return; }
+  if (args.doctor) { await runDoctor(); return; }
   printHeader();
 
   if (!process.env.GEMINI_API_KEY && !process.env.GOOGLE_API_KEY) {

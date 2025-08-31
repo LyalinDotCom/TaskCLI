@@ -22,7 +22,8 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {} }
     FORCE_COLOR: '1',
     npm_config_yes: options.autoConfirm ? 'true' : undefined,
   };
-  if (ui?.onLog) ui.onLog(chalk.gray(`Executing: ${command}`));
+  if (ui?.onLog) ui.onLog(chalk.gray(`Executing command...`));
+  if (ui?.onCommandStart) ui.onCommandStart(command);
   const res = await runCommand(command, {
     cwd,
     env: baseEnv,
@@ -31,6 +32,7 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {} }
     idleTimeoutMs: 15000,
     timeoutMs: 15 * 60 * 1000,
   });
+  if (ui?.onCommandDone) ui.onCommandDone({ code: res.code ?? 0, ok: !!res.ok });
   if (res.ok) return { ok: true };
 
   const interactive = res.timeout === 'idle' || detectInteractive(res.stdout, res.stderr);
@@ -94,6 +96,7 @@ Rules:
     const cmds = Array.isArray(retry.commands) ? retry.commands : [String(retry.commands || '')];
     if (ui?.onLog && retry.note) ui.onLog(retry.note);
     for (const cmd of cmds) {
+      if (ui?.onCommandStart) ui.onCommandStart(cmd);
       const again = await runCommand(cmd, {
         cwd,
         env: baseEnv,
@@ -102,6 +105,7 @@ Rules:
         idleTimeoutMs: 15000,
         timeoutMs: 15 * 60 * 1000,
       });
+      if (ui?.onCommandDone) ui.onCommandDone({ code: again.code ?? 0, ok: !!again.ok });
       if (!again.ok) {
         return { ok: false, error: again.error || 'Retry failed' };
       }
@@ -111,4 +115,3 @@ Rules:
 
   return { ok: false, error: 'Unknown retry action' };
 }
-

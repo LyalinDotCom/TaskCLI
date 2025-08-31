@@ -4,27 +4,34 @@ import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import chalk from 'chalk';
 import { orchestrate } from '../orchestrator.js';
-import { saveSession } from '../session.js';
+import { saveSession, saveCommandOutput } from '../session.js';
 
 const h = React.createElement;
 
 function Message({ role, text }) {
-  const color = role === 'user' ? 'cyan' : role === 'planner' ? 'yellow' : role === 'executor' ? 'green' : 'white';
-  return h(
-    Box,
-    { flexDirection: 'column', marginBottom: 1 },
-    h(Text, { color }, (role || '').toUpperCase()),
-    h(Text, null, text),
-  );
-}
-
-function TaskRow({ task, status }) {
-  const indicator = status === 'running' ? h(Spinner) : status === 'done' ? '✔' : status === 'failed' ? '✖' : '•';
-  return h(
-    Box,
-    null,
-    h(Text, null, indicator, ' ', task.id, ' ', task.title, ' [', task.type, ']'),
-  );
+  // Minimal, distinct styles per role
+  if (role === 'command') {
+    return h(Box, { marginBottom: 0 }, h(Text, { color: 'cyan' }, `[CMD] $ ${text}`));
+  }
+  if (role === 'output') {
+    return h(Box, null, h(Text, { color: 'gray' }, `│ ${text.replace(/\n$/,'')}`));
+  }
+  if (role === 'tasks') {
+    return h(Box, { flexDirection: 'column' }, h(Text, { bold: true }, `[TASKS]`), h(Text, null, text));
+  }
+  if (role === 'result') {
+    return h(Box, { flexDirection: 'column' }, h(Text, { bold: true }, `RESULT`), h(Text, null, text));
+  }
+  if (role === 'agent') {
+    return h(Box, null, h(Text, { color: 'white' }, `AGENT: ${text}`));
+  }
+  if (role === 'system') {
+    return h(Box, null, h(Text, { color: 'white', dimColor: true }, `SYSTEM: ${text}`));
+  }
+  if (role === 'user') {
+    return h(Box, null, h(Text, { color: 'white' }, `USER: ${text}`));
+  }
+  return h(Box, null, h(Text, null, text));
 }
 
 export function App({ session, models, initialInput, options }) {
@@ -34,7 +41,13 @@ export function App({ session, models, initialInput, options }) {
   const [messages, setMessages] = React.useState([]);
   const [tasks, setTasks] = React.useState([]);
   const [taskStatus, setTaskStatus] = React.useState({});
-  const [cmdLog, setCmdLog] = React.useState('');
+  const [cmdBuffer, setCmdBuffer] = React.useState('');
+  const [lastCommand, setLastCommand] = React.useState('');
+  const [queue, setQueue] = React.useState([]);
+
+  const MAX_MESSAGES = 150;
+  const MAX_CMD_CHARS = 4000;
+  const MAX_QUEUE_ITEMS = 5;
 
   React.useEffect(() => {
     setMessages((m) => [
@@ -43,32 +56,83 @@ export function App({ session, models, initialInput, options }) {
     ]);
   }, []);
 
+  function appendMessage(msg) {
+    setMessages((m) => {
+      const next = [...m, msg];
+      return next.slice(-MAX_MESSAGES);
+    });
+  }
+
+  function renderTasksSnapshot(t, status) {
+    const lines = t.map((task) => {
+      const st = status[task.id] || 'pending';
+      const mark = st === 'done' ? 'x' : st === 'running' ? '>' : ' ';
+      const title = st === 'done' ? chalk.strikethrough(task.title) : task.title;
+      return `[${mark}] ${task.id} ${title} [${task.type}]`;
+    });
+    return lines.join('\n');
+  }
+
   const ui = React.useMemo(() => ({
     onPlan: (t) => {
       setTasks(t);
-      setMessages((m) => [...m, { role: 'planner', text: `Planned ${t.length} tasks.` }]);
+      appendMessage({ role: 'agent', text: `Planned ${t.length} tasks.` });
+      appendMessage({ role: 'tasks', text: renderTasksSnapshot(t, {}) });
     },
     onTaskStart: (task) => {
-      setTaskStatus((s) => ({ ...s, [task.id]: 'running' }));
+      setTaskStatus((s) => {
+        const ns = { ...s, [task.id]: 'running' };
+        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        return ns;
+      });
     },
-    onTaskSuccess: (task) => {
-      setTaskStatus((s) => ({ ...s, [task.id]: 'done' }));
+    onTaskSuccess: (task, maybeData) => {
+      setTaskStatus((s) => {
+        const ns = { ...s, [task.id]: 'done' };
+        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        if (maybeData) {
+          const preview = String(maybeData);
+          appendMessage({ role: 'result', text: preview.length > 2000 ? preview.slice(0, 2000) + '\n…' : preview });
+        }
+        return ns;
+      });
     },
     onTaskFailure: (task, error) => {
-      setTaskStatus((s) => ({ ...s, [task.id]: 'failed' }));
-      setMessages((m) => [...m, { role: 'executor', text: `Task ${task.id} failed: ${error?.message || String(error)}` }]);
+      setTaskStatus((s) => {
+        const ns = { ...s, [task.id]: 'failed' };
+        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        return ns;
+      });
+      appendMessage({ role: 'agent', text: `Task ${task.id} failed: ${error?.message || String(error)}` });
     },
-    onCommandOut: (s) => setCmdLog((prev) => prev + s),
-    onCommandErr: (s) => setCmdLog((prev) => prev + s),
-    onLog: (s) => setMessages((m) => [...m, { role: 'executor', text: s }]),
-    onComplete: (count) => {
-      setMessages((m) => [...m, { role: 'executor', text: `Completed ${count} tasks.` }]);
+    onCommandOut: (s) => {
+      setCmdBuffer((prev) => prev + s);
+      appendMessage({ role: 'output', text: s });
     },
-  }), []);
+    onCommandErr: (s) => {
+      setCmdBuffer((prev) => prev + s);
+      appendMessage({ role: 'output', text: s });
+    },
+    onLog: (s) => appendMessage({ role: 'agent', text: s }),
+    onCommandStart: (cmd) => {
+      setLastCommand(cmd);
+      setCmdBuffer('');
+      appendMessage({ role: 'command', text: cmd });
+    },
+    onCommandDone: ({ code, ok }) => {
+      appendMessage({ role: 'agent', text: `Command finished with exit code ${code}${ok ? ' (ok)' : ' (failed)'}` });
+      try {
+        const p = saveCommandOutput(session, { command: lastCommand, output: cmdBuffer });
+        appendMessage({ role: 'system', text: `Saved full command output to: ${p}` });
+      } catch {}
+    },
+    onComplete: (count) => appendMessage({ role: 'agent', text: `Completed ${count} tasks.` }),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [tasks, taskStatus, lastCommand, cmdBuffer]);
 
   async function runOrchestrator(goal) {
     setBusy(true);
-    setCmdLog('');
+    setCmdBuffer('');
     setMessages((m) => [...m, { role: 'user', text: goal }]);
     try {
       const res = await orchestrate({ userGoal: goal, models, session, options, ui });
@@ -78,6 +142,16 @@ export function App({ session, models, initialInput, options }) {
       saveSession(session);
     } finally {
       setBusy(false);
+      // Drain queued inputs
+      setQueue((q) => {
+        const copy = [...q];
+        const next = copy.shift();
+        if (next) {
+          // Schedule next run
+          setTimeout(() => runOrchestrator(next), 0);
+        }
+        return copy;
+      });
     }
   }
 
@@ -94,25 +168,15 @@ export function App({ session, models, initialInput, options }) {
     h(Box, null, h(Text, null, `${chalk.bold('TaskCLI Interactive')} — Session ${session.id}`)),
     h(
       Box,
-      { marginTop: 1, flexDirection: 'row' },
-      h(
-        Box,
-        { flexGrow: 1, flexDirection: 'column', borderStyle: 'round', padding: 1 },
-        ...messages.slice(-50).map((m, idx) => h(Message, { key: String(idx), role: m.role, text: m.text })),
-      ),
-      h(
-        Box,
-        { width: 48, marginLeft: 1, flexDirection: 'column', borderStyle: 'round', padding: 1 },
-        h(Text, null, 'Tasks'),
-        ...tasks.map((t) => h(TaskRow, { key: t.id, task: t, status: taskStatus[t.id] || 'pending' })),
-      ),
+      { marginTop: 1, flexDirection: 'column' },
+      ...messages.map((m, idx) => h(Message, { key: String(idx), role: m.role, text: m.text })),
     ),
-    cmdLog
+    queue.length > 0
       ? h(
           Box,
           { marginTop: 1, flexDirection: 'column', borderStyle: 'round', padding: 1 },
-          h(Text, null, chalk.gray('Command Output')),
-          h(Text, null, cmdLog),
+          h(Text, null, chalk.yellow('Queued inputs (next up):')),
+          h(Text, null, queue.slice(0, MAX_QUEUE_ITEMS).map((q, i) => `${i + 1}. ${q.length > 60 ? q.slice(0, 57) + '…' : q}`).join(' | ') + (queue.length > MAX_QUEUE_ITEMS ? ` (+${queue.length - MAX_QUEUE_ITEMS} more)` : '')),
         )
       : null,
     h(
@@ -125,9 +189,14 @@ export function App({ session, models, initialInput, options }) {
         onChange: setInput,
         placeholder: 'Describe your goal...',
         onSubmit: (val) => {
-          if (val.trim()) {
-            setInput('');
-            runOrchestrator(val.trim());
+          const trimmed = val.trim();
+          if (!trimmed) return;
+          setInput('');
+          if (busy) {
+            setQueue((q) => [...q, trimmed]);
+            appendMessage({ role: 'system', text: `Queued: ${trimmed}` });
+          } else {
+            runOrchestrator(trimmed);
           }
         },
       }),

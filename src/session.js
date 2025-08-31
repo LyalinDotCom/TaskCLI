@@ -3,24 +3,29 @@ import path from 'node:path';
 import os from 'node:os';
 
 let SESSION_DIR;
+let BASE_DIR;
 
 function defaultDir() {
-  return path.join(os.homedir(), '.taskcli', 'sessions');
+  return path.join(os.homedir(), '.taskcli');
 }
 function fallbackDir() {
   // within repo if home is not writable in sandbox
-  return path.join(process.cwd(), 'TaskCLI', '.taskcli', 'sessions');
+  return path.join(process.cwd(), 'TaskCLI', '.taskcli');
 }
 
 export function ensureSessionDir() {
   const primary = defaultDir();
   try {
-    fs.mkdirSync(primary, { recursive: true });
-    SESSION_DIR = primary;
+    fs.mkdirSync(path.join(primary, 'sessions'), { recursive: true });
+    fs.mkdirSync(path.join(primary, 'logs'), { recursive: true });
+    BASE_DIR = primary;
+    SESSION_DIR = path.join(primary, 'sessions');
   } catch {
     const alt = fallbackDir();
-    fs.mkdirSync(alt, { recursive: true });
-    SESSION_DIR = alt;
+    fs.mkdirSync(path.join(alt, 'sessions'), { recursive: true });
+    fs.mkdirSync(path.join(alt, 'logs'), { recursive: true });
+    BASE_DIR = alt;
+    SESSION_DIR = path.join(alt, 'sessions');
   }
 }
 
@@ -43,10 +48,21 @@ export function saveSession(session) {
   } catch {
     // last-resort: try fallback dir
     const alt = fallbackDir();
-    fs.mkdirSync(alt, { recursive: true });
-    const altFile = path.join(alt, `${session.id}.json`);
+    fs.mkdirSync(path.join(alt, 'sessions'), { recursive: true });
+    const altFile = path.join(alt, 'sessions', `${session.id}.json`);
     fs.writeFileSync(altFile, JSON.stringify(session, null, 2), 'utf8');
   }
+}
+
+export function saveCommandOutput(session, { command, output }) {
+  if (!BASE_DIR) ensureSessionDir();
+  const logsDir = path.join(BASE_DIR, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+  const safe = String(command || 'command').replace(/[^a-zA-Z0-9_.-]+/g, '-').slice(0, 40);
+  const file = path.join(logsDir, `${session.id}_${Date.now()}_${safe}.log`);
+  const header = `# Command: ${command}\n# Time: ${new Date().toISOString()}\n\n`;
+  fs.writeFileSync(file, header + (output || ''), 'utf8');
+  return file;
 }
 
 export function appendEvent(session, event) {

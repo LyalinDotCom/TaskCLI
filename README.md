@@ -16,6 +16,11 @@ cd TaskCLI
 npm install
 ```
 
+Quick Health Check
+```bash
+npm run doctor
+```
+
 Usage
 ```bash
 # Interactive UI (default)
@@ -29,6 +34,12 @@ node bin/taskcli.js -y --headless "Initialize a Node project with chalk and exec
 
 # Override models
 node bin/taskcli.js --headless --flash-model gemini-2.5-flash --pro-model gemini-1.5-pro "Create a TypeScript CLI"
+```
+
+Non-Interactive Smoke Test (no network)
+```bash
+# Runs a canned plan that verifies shell, file write/read, codegen and execution
+npm run smoke
 ```
 
 Notes

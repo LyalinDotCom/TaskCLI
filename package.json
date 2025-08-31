@@ -8,7 +8,16 @@
   },
   "scripts": {
     "start": "node bin/taskcli.js",
-    "dev": "node bin/taskcli.js --interactive"
+    "dev": "node bin/taskcli.js --interactive",
+    "doctor": "node bin/taskcli.js --doctor",
+    "help": "node bin/taskcli.js --help",
+    "pack:dry": "npm pack --dry-run",
+    "smoke": "mkdir -p .taskcli/smoke && TASKCLI_SMOKE=1 node bin/taskcli.js --headless -y --cwd .taskcli/smoke 'smoke test pipeline'",
+    "pack:dry:noscripts": "npm pack --dry-run --ignore-scripts",
+    "check": "npm run doctor && npm run smoke && npm run pack:dry:noscripts",
+    "build": "npm run check",
+    "prepublishOnly": "npm run check",
+    "preversion": "npm run check"
   },
   "dependencies": {
     "chalk": "^5.3.0",
