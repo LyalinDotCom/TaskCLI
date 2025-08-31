@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, Box, Text, useApp } from 'ink';
+import { render, Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import chalk from 'chalk';
@@ -28,7 +28,12 @@ function Message({ role, text }) {
     return h(Box, { flexDirection: 'column' }, h(Text, { bold: true }, `[TASKS]`), h(Text, null, text));
   }
   if (role === 'result') {
-    return h(Box, { flexDirection: 'column' }, h(Text, { bold: true }, `RESULT`), h(Text, null, text));
+    return h(
+      Box,
+      { flexDirection: 'column' },
+      h(Text, { color: 'magentaBright', bold: true }, `RESULT`),
+      h(Text, { color: 'magenta' }, text),
+    );
   }
   if (role === 'agent') {
     return h(Box, null, h(Text, { color: 'white' }, `AGENT: ${text}`));
@@ -61,10 +66,27 @@ export function App({ session, models, initialInput, options }) {
   React.useEffect(() => {
     setMessages((m) => [
       ...m,
-      { role: 'system', text: 'TaskCLI interactive mode. Type instructions and press Enter.' },
+      { role: 'system', text: 'TaskCLI interactive mode. Type instructions and press Enter. Press Esc twice to cancel.' },
       { role: 'sep' },
     ]);
   }, []);
+
+  // Double-Escape to cancel current run
+  const [lastEscAt, setLastEscAt] = React.useState(0);
+  useInput((input, key) => {
+    if (key.escape) {
+      const now = Date.now();
+      const windowMs = Number(process.env.TASKCLI_ESC_DOUBLE_MS || 600);
+      if (now - lastEscAt <= windowMs) {
+        setCancelRequested(true);
+        setLastEscAt(0);
+        appendMessage({ role: 'system', text: 'Cancel requested (Esc Esc). Finishing current action then stopping…' });
+      } else {
+        setLastEscAt(now);
+        appendMessage({ role: 'system', text: 'Press Esc again to cancel…' });
+      }
+    }
+  });
 
   function appendMessage(msg) {
     setMessages((m) => {
@@ -233,11 +255,6 @@ export function App({ session, models, initialInput, options }) {
           const trimmed = val.trim();
           if (!trimmed) return;
           setInput('');
-          if (trimmed.toLowerCase() === '/cancel' || trimmed.toLowerCase() === 'cancel' || trimmed.toLowerCase() === '/stop') {
-            setCancelRequested(true);
-            appendMessage({ role: 'system', text: 'Cancel requested. Finishing current action then stopping…' });
-            return;
-          }
           if (busy) {
             setQueue((q) => [...q, trimmed]);
             appendMessage({ role: 'system', text: `Queued: ${trimmed}` });

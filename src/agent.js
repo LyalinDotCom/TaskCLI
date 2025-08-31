@@ -153,6 +153,10 @@ async function execAction(action, ctx) {
 }
 
 export async function runProAgentCycle({ userGoal, plan, session, models, options = {}, ui, maxActions = 5 }) {
+  // Early cancellation check
+  if (ui?.shouldCancel && ui.shouldCancel()) {
+    return { ok: false, cancelled: true };
+  }
   // Smoke mode: deterministic canned actions
   if (process.env.TASKCLI_SMOKE === '1') {
     const canned = {

@@ -217,6 +217,12 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
   // Execute tasks sequentially; each step may require multiple agent cycles
   const MAX_STEP_CYCLES = Number(process.env.TASKCLI_MAX_STEP_CYCLES || 20);
   const visibleTasks = plan.filter((t) => t.type !== 'session_close');
+
+  // If user requested cancel during planning, respect it now
+  if (ui?.shouldCancel && ui.shouldCancel()) {
+    if (ui?.onLog) ui.onLog('Execution cancelled by user.');
+    return { ok: false, error: 'cancelled' };
+  }
   for (const task of visibleTasks) {
     // Start visual status
     if (ui?.onTaskStart) ui.onTaskStart(task); else startTask(task);
@@ -231,6 +237,10 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
 
       const agentRes = await runProAgentCycle({ userGoal, plan: [task], session, models, options, ui });
       if (!agentRes.ok) {
+        if (agentRes.cancelled) {
+          if (ui?.onLog) ui.onLog('Execution cancelled by user.');
+          return { ok: false, error: 'cancelled' };
+        }
         // Fallback to classic executor for this task
         const res = await execTask(task, { session, models, options, ui });
         if (!res.ok) {
