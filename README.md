@@ -44,6 +44,7 @@ npm run smoke
 
 Notes
 - Task planning uses Flash’s Genkit adapter from `Flash/packages/genkit/dist`
-- Code generation uses Pro; content is saved directly to files per planned tasks
+- Code generation uses Pro and always receives a persistent system prompt loaded from `TaskCLI/prompts/pro-system.md`. You can edit this file to tune behavior.
+- Pro calls include full session context (prior goals, commands, outputs) to maintain continuity across tasks.
 - Web search uses `googlethis` to supplement context
 - Interactive UI is built with Ink (React for CLIs). If your terminal doesn’t support raw mode, the CLI falls back to non-interactive.

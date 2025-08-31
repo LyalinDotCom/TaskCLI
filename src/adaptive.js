@@ -15,7 +15,7 @@ function detectInteractive(stdout, stderr) {
   return patterns.some((re) => re.test(text));
 }
 
-export async function smartRunCommand({ command, cwd, ui, models, options = {} }) {
+export async function smartRunCommand({ command, cwd, ui, models, options = {}, session }) {
   const baseEnv = {
     CI: '1',
     ADBLOCK: '1',
@@ -33,7 +33,7 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {} }
     timeoutMs: 15 * 60 * 1000,
   });
   if (ui?.onCommandDone) ui.onCommandDone({ code: res.code ?? 0, ok: !!res.ok });
-  if (res.ok) return { ok: true };
+  if (res.ok) return { ok: true, stdout: res.stdout, stderr: res.stderr };
 
   const interactive = res.timeout === 'idle' || detectInteractive(res.stdout, res.stderr);
   const failure = !interactive;
@@ -73,8 +73,9 @@ Rules:
 - Keep commands safe and idempotent if possible.
 - If critical missing info, choose ask_user.`;
 
-  const retryText = await models.generateWithPro(
+  const retryText = await models.generateProWithContext(
     `${retryPrompt}\n\nContext:\n${JSON.stringify({ context, classification }, null, 2)}`,
+    session,
     0.2,
   );
   let retry;
@@ -107,11 +108,11 @@ Rules:
       });
       if (ui?.onCommandDone) ui.onCommandDone({ code: again.code ?? 0, ok: !!again.ok });
       if (!again.ok) {
-        return { ok: false, error: again.error || 'Retry failed' };
+        return { ok: false, error: again.error || 'Retry failed', stdout: again.stdout, stderr: again.stderr };
       }
     }
     return { ok: true };
   }
 
-  return { ok: false, error: 'Unknown retry action' };
+  return { ok: false, error: 'Unknown retry action', stdout: res.stdout, stderr: res.stderr };
 }

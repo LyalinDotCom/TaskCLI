@@ -1,4 +1,7 @@
 import chalk from 'chalk';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { planningPrompt, codeGenPrompt, editFilePrompt } from './prompts.js';
 import { appendEvent, summarizeMemory, upsertTask } from './session.js';
 import { writeFile as writeFs, readFile as readFs } from './tools/fs.js';
@@ -27,10 +30,13 @@ async function planTasks({ userGoal, models, session, ui }) {
   if (!parsed || !Array.isArray(parsed.tasks)) {
     throw new Error('Planner did not return valid JSON task list.');
   }
+  // Append hidden closeout task
+  parsed.tasks.push({ id: 'TCLOSE', type: 'session_close', title: 'Close out session', hidden: true });
   if (ui?.onPlan) ui.onPlan(parsed.tasks);
   if (ui?.onLog) {
-    ui.onLog(`Tasks created (${parsed.tasks.length}):`);
-    for (const t of parsed.tasks) {
+    const visible = parsed.tasks.filter((t) => t.type !== 'session_close');
+    ui.onLog(`Tasks created (${visible.length}):`);
+    for (const t of visible) {
       ui.onLog(` - ${t.id} ${t.title} [${t.type}]${t.rationale ? ` — ${t.rationale}` : ''}`);
     }
   }
@@ -55,7 +61,10 @@ async function execTask(task, ctx) {
       case 'write_file': {
         let content = task.content;
         if (!content && task.content_prompt) {
-          const code = await models.generateWithPro(codeGenPrompt({ instruction: task.content_prompt, context: `Path: ${task.path}` }));
+          const code = await models.generateProWithContext(
+            codeGenPrompt({ instruction: task.content_prompt, context: `Path: ${task.path}` }),
+            session,
+          );
           content = code;
         }
         if (!content) throw new Error('No content to write.');
@@ -67,7 +76,10 @@ async function execTask(task, ctx) {
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
-        const code = await models.generateWithPro(codeGenPrompt({ instruction: task.prompt, context: `Path: ${task.path}` }));
+        const code = await models.generateProWithContext(
+          codeGenPrompt({ instruction: task.prompt, context: `Path: ${task.path}` }),
+          session,
+        );
         await writeFs(session.meta.cwd, task.path, code);
         appendEvent(session, { type: 'write_file', summary: `Generated ${task.path}` });
         if (ctx.ui?.onLog) ctx.ui.onLog(`Generated file: ${task.path} (${code.length} bytes)`);
@@ -77,8 +89,9 @@ async function execTask(task, ctx) {
       }
       case 'edit_file': {
         const current = await readFs(session.meta.cwd, task.path);
-        const updated = await models.generateWithPro(
-          editFilePrompt({ filepath: task.path, currentContent: current.content, instruction: task.instruction, context: '' })
+        const updated = await models.generateProWithContext(
+          editFilePrompt({ filepath: task.path, currentContent: current.content, instruction: task.instruction, context: '' }),
+          session,
         );
         await writeFs(session.meta.cwd, task.path, updated);
         appendEvent(session, { type: 'edit_file', summary: `Edited ${task.path}` });
@@ -97,8 +110,8 @@ async function execTask(task, ctx) {
           console.log(chalk.yellow(`About to run: ${task.command}`));
           console.log(chalk.gray('Use --yes to auto-confirm in the future.'));
         }
-        const res = await smartRunCommand({ command: task.command, cwd, ui: ctx.ui, models, options });
-        appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}` });
+        const res = await smartRunCommand({ command: task.command, cwd, ui: ctx.ui, models, options, session });
+        appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}`, stdout: res.stdout, stderr: res.stderr });
         if (!res.ok) throw new Error(res.error || 'Command failed');
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
         else taskSuccess(task);
@@ -117,6 +130,23 @@ async function execTask(task, ctx) {
         if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, top);
         else taskSuccess(task);
         return { ok: true, data: top };
+      }
+      case 'session_close': {
+        const here = path.dirname(fileURLToPath(import.meta.url));
+        const candidates = [
+          path.join(here, '..', 'prompts', 'pro-closeout.md'),
+          path.join(here, '..', '..', 'TaskCLI', 'prompts', 'pro-closeout.md'),
+        ];
+        let closeText = 'Compose a concise closing note for the user with completed items, next steps, and open questions.';
+        for (const c of candidates) {
+          if (fs.existsSync(c)) { closeText = fs.readFileSync(c, 'utf8'); break; }
+        }
+        if (ctx.ui?.onLog) ctx.ui.onLog('Preparing session closeout...');
+        const finalNote = await models.generateProWithContext(closeText, session, 0.2);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, finalNote);
+        else taskSuccess(task);
+        appendEvent(session, { type: 'closeout', summary: 'Generated closeout note' });
+        return { ok: true };
       }
       default:
         throw new Error(`Unknown task type: ${task.type}`);

@@ -10,6 +10,14 @@ const h = React.createElement;
 
 function Message({ role, text }) {
   // Minimal, distinct styles per role
+  if (role === 'sep') {
+    const width = Math.max(40, Math.min(120, (process.stdout.columns || 80)));
+    const line = '─'.repeat(width);
+    return h(Box, null, h(Text, { color: 'gray', dimColor: true }, line));
+  }
+  if (role === 'spacer') {
+    return h(Box, null, h(Text, null, ' '));
+  }
   if (role === 'command') {
     return h(Box, { marginBottom: 0 }, h(Text, { color: 'cyan' }, `[CMD] $ ${text}`));
   }
@@ -53,6 +61,7 @@ export function App({ session, models, initialInput, options }) {
     setMessages((m) => [
       ...m,
       { role: 'system', text: 'TaskCLI interactive mode. Type instructions and press Enter.' },
+      { role: 'sep' },
     ]);
   }, []);
 
@@ -64,12 +73,14 @@ export function App({ session, models, initialInput, options }) {
   }
 
   function renderTasksSnapshot(t, status) {
-    const lines = t.map((task) => {
-      const st = status[task.id] || 'pending';
-      const mark = st === 'done' ? 'x' : st === 'running' ? '>' : ' ';
-      const title = st === 'done' ? chalk.strikethrough(task.title) : task.title;
-      return `[${mark}] ${task.id} ${title} [${task.type}]`;
-    });
+    const lines = t
+      .filter((task) => task.type !== 'session_close')
+      .map((task) => {
+        const st = status[task.id] || 'pending';
+        const mark = st === 'done' ? 'x' : st === 'running' ? '>' : ' ';
+        const title = st === 'done' ? chalk.strikethrough(task.title) : task.title;
+        return `[${mark}] ${task.id} ${title} [${task.type}]`;
+      });
     return lines.join('\n');
   }
 
@@ -77,12 +88,15 @@ export function App({ session, models, initialInput, options }) {
     onPlan: (t) => {
       setTasks(t);
       appendMessage({ role: 'agent', text: `Planned ${t.length} tasks.` });
+      appendMessage({ role: 'spacer' });
       appendMessage({ role: 'tasks', text: renderTasksSnapshot(t, {}) });
+      appendMessage({ role: 'sep' });
     },
     onTaskStart: (task) => {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'running' };
         appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        appendMessage({ role: 'spacer' });
         return ns;
       });
     },
@@ -90,10 +104,12 @@ export function App({ session, models, initialInput, options }) {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'done' };
         appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        appendMessage({ role: 'spacer' });
         if (maybeData) {
           const preview = String(maybeData);
           appendMessage({ role: 'result', text: preview.length > 2000 ? preview.slice(0, 2000) + '\n…' : preview });
         }
+        appendMessage({ role: 'sep' });
         return ns;
       });
     },
@@ -101,9 +117,11 @@ export function App({ session, models, initialInput, options }) {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'failed' };
         appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        appendMessage({ role: 'spacer' });
         return ns;
       });
       appendMessage({ role: 'agent', text: `Task ${task.id} failed: ${error?.message || String(error)}` });
+      appendMessage({ role: 'sep' });
     },
     onCommandOut: (s) => {
       setCmdBuffer((prev) => prev + s);
@@ -117,7 +135,9 @@ export function App({ session, models, initialInput, options }) {
     onCommandStart: (cmd) => {
       setLastCommand(cmd);
       setCmdBuffer('');
+      appendMessage({ role: 'sep' });
       appendMessage({ role: 'command', text: cmd });
+      appendMessage({ role: 'spacer' });
     },
     onCommandDone: ({ code, ok }) => {
       appendMessage({ role: 'agent', text: `Command finished with exit code ${code}${ok ? ' (ok)' : ' (failed)'}` });
@@ -125,6 +145,7 @@ export function App({ session, models, initialInput, options }) {
         const p = saveCommandOutput(session, { command: lastCommand, output: cmdBuffer });
         appendMessage({ role: 'system', text: `Saved full command output to: ${p}` });
       } catch {}
+      appendMessage({ role: 'sep' });
     },
     onComplete: (count) => appendMessage({ role: 'agent', text: `Completed ${count} tasks.` }),
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,7 +154,7 @@ export function App({ session, models, initialInput, options }) {
   async function runOrchestrator(goal) {
     setBusy(true);
     setCmdBuffer('');
-    setMessages((m) => [...m, { role: 'user', text: goal }]);
+    setMessages((m) => [...m, { role: 'sep' }, { role: 'user', text: goal }, { role: 'spacer' }]);
     try {
       const res = await orchestrate({ userGoal: goal, models, session, options, ui });
       if (!res.ok) {
