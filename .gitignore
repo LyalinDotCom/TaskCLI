@@ -45,3 +45,5 @@ Thumbs.db
 # TaskCLI data
 .taskcli/
 
+# Local npm cache for packing
+.npm-cache/

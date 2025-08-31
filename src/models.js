@@ -93,12 +93,25 @@ export async function loadModels({ flashModel, proModel }) {
     const wrapped = `${PRO_SYSTEM}\n\n${prompt}`;
     const modelId = proModel.startsWith('googleai/') ? proModel : `googleai/${proModel}`;
     if (gen.ai && typeof gen.ai.generate === 'function') {
-      const response = await gen.ai.generate({
-        model: modelId,
-        prompt: wrapped,
-        config: { temperature, thinkingConfig: { thinkingBudget: 8000 } },
-      });
-      return response.text;
+      const wants = (process.env.PRO_THINKING || 'auto');
+      const supports = /(2\.5|2\.0|thinking|reason)/i.test(proModel);
+      const tryThinking = wants === '1' || (wants === 'auto' && supports);
+      const budget = parseInt(process.env.PRO_THINKING_BUDGET || '8000', 10);
+      try {
+        const response = await gen.ai.generate({
+          model: modelId,
+          prompt: wrapped,
+          config: tryThinking ? { temperature, thinkingConfig: { thinkingBudget: budget } } : { temperature },
+        });
+        return response.text;
+      } catch (e) {
+        const msg = String(e?.message || e);
+        if (/thinking is not supported/i.test(msg)) {
+          const response = await gen.ai.generate({ model: modelId, prompt: wrapped, config: { temperature } });
+          return response.text;
+        }
+        throw e;
+      }
     }
     const text = await gen.generateText({ prompt: wrapped, provider: 'google', model: proModel, temperature });
     return text;
@@ -109,12 +122,25 @@ export async function loadModels({ flashModel, proModel }) {
     const wrapped = `${PRO_SYSTEM}\n\nContext Transcript (all prior steps):\n${transcript || '(no prior history)'}\n\n${prompt}`;
     const modelId = proModel.startsWith('googleai/') ? proModel : `googleai/${proModel}`;
     if (gen.ai && typeof gen.ai.generate === 'function') {
-      const response = await gen.ai.generate({
-        model: modelId,
-        prompt: wrapped,
-        config: { temperature, thinkingConfig: { thinkingBudget: 8000 } },
-      });
-      return response.text;
+      const wants = (process.env.PRO_THINKING || 'auto');
+      const supports = /(2\.5|2\.0|thinking|reason)/i.test(proModel);
+      const tryThinking = wants === '1' || (wants === 'auto' && supports);
+      const budget = parseInt(process.env.PRO_THINKING_BUDGET || '8000', 10);
+      try {
+        const response = await gen.ai.generate({
+          model: modelId,
+          prompt: wrapped,
+          config: tryThinking ? { temperature, thinkingConfig: { thinkingBudget: budget } } : { temperature },
+        });
+        return response.text;
+      } catch (e) {
+        const msg = String(e?.message || e);
+        if (/thinking is not supported/i.test(msg)) {
+          const response = await gen.ai.generate({ model: modelId, prompt: wrapped, config: { temperature } });
+          return response.text;
+        }
+        throw e;
+      }
     }
     const text = await gen.generateText({ prompt: wrapped, provider: 'google', model: proModel, temperature });
     return text;
