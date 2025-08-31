@@ -2,10 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const SESS_DIR = path.join(os.homedir(), '.taskcli', 'sessions');
+let SESSION_DIR;
+
+function defaultDir() {
+  return path.join(os.homedir(), '.taskcli', 'sessions');
+}
+function fallbackDir() {
+  // within repo if home is not writable in sandbox
+  return path.join(process.cwd(), 'TaskCLI', '.taskcli', 'sessions');
+}
 
 export function ensureSessionDir() {
-  fs.mkdirSync(SESS_DIR, { recursive: true });
+  const primary = defaultDir();
+  try {
+    fs.mkdirSync(primary, { recursive: true });
+    SESSION_DIR = primary;
+  } catch {
+    const alt = fallbackDir();
+    fs.mkdirSync(alt, { recursive: true });
+    SESSION_DIR = alt;
+  }
 }
 
 export function newSession(meta = {}) {
@@ -20,8 +36,17 @@ export function newSession(meta = {}) {
 }
 
 export function saveSession(session) {
-  const file = path.join(SESS_DIR, `${session.id}.json`);
-  fs.writeFileSync(file, JSON.stringify(session, null, 2), 'utf8');
+  if (!SESSION_DIR) ensureSessionDir();
+  const file = path.join(SESSION_DIR, `${session.id}.json`);
+  try {
+    fs.writeFileSync(file, JSON.stringify(session, null, 2), 'utf8');
+  } catch {
+    // last-resort: try fallback dir
+    const alt = fallbackDir();
+    fs.mkdirSync(alt, { recursive: true });
+    const altFile = path.join(alt, `${session.id}.json`);
+    fs.writeFileSync(altFile, JSON.stringify(session, null, 2), 'utf8');
+  }
 }
 
 export function appendEvent(session, event) {

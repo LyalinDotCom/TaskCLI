@@ -18,21 +18,21 @@ npm install
 
 Usage
 ```bash
-# One-shot
-node bin/taskcli.js "Build an Express API skeleton with tests"
+# Interactive UI (default)
+node bin/taskcli.js
 
-# Interactive
-node bin/taskcli.js -i
+# Headless (no UI)
+node bin/taskcli.js --headless "Build an Express API skeleton with tests"
 
 # Auto-confirm shell commands
-node bin/taskcli.js -y "Initialize a Node project with chalk and execa"
+node bin/taskcli.js -y --headless "Initialize a Node project with chalk and execa"
 
 # Override models
-node bin/taskcli.js --flash-model gemini-2.5-flash --pro-model gemini-1.5-pro "Create a TypeScript CLI"
+node bin/taskcli.js --headless --flash-model gemini-2.5-flash --pro-model gemini-1.5-pro "Create a TypeScript CLI"
 ```
 
 Notes
 - Task planning uses Flash’s Genkit adapter from `Flash/packages/genkit/dist`
 - Code generation uses Pro; content is saved directly to files per planned tasks
 - Web search uses `googlethis` to supplement context
-
+- Interactive UI is built with Ink (React for CLIs). If your terminal doesn’t support raw mode, the CLI falls back to non-interactive.

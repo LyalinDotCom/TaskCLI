@@ -17,7 +17,7 @@ function safeParseJSON(text) {
   }
 }
 
-async function planTasks({ userGoal, models, session }) {
+async function planTasks({ userGoal, models, session, ui }) {
   const memorySummary = summarizeMemory(session);
   const prompt = planningPrompt({ goal: userGoal, memorySummary, cwd: session.meta.cwd });
   const text = await models.generateWithFlash(prompt, 0.3);
@@ -25,18 +25,21 @@ async function planTasks({ userGoal, models, session }) {
   if (!parsed || !Array.isArray(parsed.tasks)) {
     throw new Error('Planner did not return valid JSON task list.');
   }
+  if (ui?.onPlan) ui.onPlan(parsed.tasks);
   return parsed.tasks;
 }
 
 async function execTask(task, ctx) {
   const { session, models, options } = ctx;
-  startTask(task);
+  if (ctx.ui?.onTaskStart) ctx.ui.onTaskStart(task);
+  else startTask(task);
   try {
     switch (task.type) {
       case 'read_file': {
         const res = await readFs(session.meta.cwd, task.path);
         appendEvent(session, { type: 'read_file', summary: `Read ${task.path}` });
-        taskSuccess(task);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, res.content);
+        else taskSuccess(task);
         return { ok: true, data: res.content };
       }
       case 'write_file': {
@@ -48,14 +51,16 @@ async function execTask(task, ctx) {
         if (!content) throw new Error('No content to write.');
         await writeFs(session.meta.cwd, task.path, content);
         appendEvent(session, { type: 'write_file', summary: `Wrote ${task.path}` });
-        taskSuccess(task);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
+        else taskSuccess(task);
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
         const code = await models.generateWithPro(codeGenPrompt({ instruction: task.prompt, context: `Path: ${task.path}` }));
         await writeFs(session.meta.cwd, task.path, code);
         appendEvent(session, { type: 'write_file', summary: `Generated ${task.path}` });
-        taskSuccess(task);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
+        else taskSuccess(task);
         return { ok: true };
       }
       case 'edit_file': {
@@ -65,20 +70,29 @@ async function execTask(task, ctx) {
         );
         await writeFs(session.meta.cwd, task.path, updated);
         appendEvent(session, { type: 'edit_file', summary: `Edited ${task.path}` });
-        taskSuccess(task);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
+        else taskSuccess(task);
         return { ok: true };
       }
       case 'run_command': {
         const confirm = task.confirm === undefined ? true : !!task.confirm;
         const cwd = task.cwd ? task.cwd : session.meta.cwd;
-        if (confirm && !options.autoConfirm) {
+        if (confirm && !options.autoConfirm && ctx.ui?.onLog) {
+          ctx.ui.onLog(chalk.yellow(`About to run: ${task.command}`));
+          ctx.ui.onLog(chalk.gray('Use --yes to auto-confirm in the future.'));
+        } else if (confirm && !options.autoConfirm) {
           console.log(chalk.yellow(`About to run: ${task.command}`));
           console.log(chalk.gray('Use --yes to auto-confirm in the future.'));
         }
-        const res = await runCommand(task.command, { cwd });
+        const res = await runCommand(task.command, {
+          cwd,
+          onStdout: ctx.ui?.onCommandOut,
+          onStderr: ctx.ui?.onCommandErr,
+        });
         appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}` });
         if (!res.ok) throw new Error(res.error || 'Command failed');
-        taskSuccess(task);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task);
+        else taskSuccess(task);
         return { ok: true };
       }
       case 'search_web': {
@@ -87,23 +101,25 @@ async function execTask(task, ctx) {
         const res = await webSearch(q, {});
         const top = res.results.slice(0, num);
         appendEvent(session, { type: 'search_web', summary: `Searched: ${q}` });
-        taskSuccess(task);
+        if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, top);
+        else taskSuccess(task);
         return { ok: true, data: top };
       }
       default:
         throw new Error(`Unknown task type: ${task.type}`);
     }
   } catch (error) {
-    taskFailure(task, error);
+    if (ctx.ui?.onTaskFailure) ctx.ui.onTaskFailure(task, error);
+    else taskFailure(task, error);
     return { ok: false, error: error?.message || String(error) };
   }
 }
 
-export async function orchestrate({ userGoal, models, session, options = {} }) {
+export async function orchestrate({ userGoal, models, session, options = {}, ui }) {
   appendEvent(session, { type: 'user_goal', message: userGoal });
   let tasks;
   try {
-    tasks = await planTasks({ userGoal, models, session });
+    tasks = await planTasks({ userGoal, models, session, ui });
   } catch (e) {
     appendEvent(session, { type: 'plan_error', message: String(e) });
     console.log(chalk.red('Planning failed: ') + String(e?.message || e));
@@ -112,11 +128,11 @@ export async function orchestrate({ userGoal, models, session, options = {} }) {
 
   // Merge into session tasks
   for (const t of tasks) upsertTask(session, { ...t, status: 'pending' });
-  printTaskList(tasks);
+  if (!ui?.onPlan) printTaskList(tasks);
 
   // Execute tasks in order
   for (const task of tasks) {
-    const res = await execTask(task, { session, models, options });
+    const res = await execTask(task, { session, models, options, ui });
     if (!res.ok) {
       appendEvent(session, { type: 'task_failed', message: task.title, error: res.error });
       return { ok: false, error: res.error };
@@ -125,7 +141,7 @@ export async function orchestrate({ userGoal, models, session, options = {} }) {
   }
 
   appendEvent(session, { type: 'completed', summary: `Completed ${tasks.length} tasks` });
-  console.log(chalk.green(`\nAll ${tasks.length} tasks completed.`));
+  if (ui?.onComplete) ui.onComplete(tasks.length);
+  else console.log(chalk.green(`\nAll ${tasks.length} tasks completed.`));
   return { ok: true };
 }
-
