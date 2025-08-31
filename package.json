@@ -1,0 +1,19 @@
+{
+  "name": "@projectflash/taskcli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "taskcli": "bin/taskcli.js"
+  },
+  "scripts": {
+    "start": "node bin/taskcli.js",
+    "dev": "node bin/taskcli.js --interactive"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "execa": "^9.6.0",
+    "googlethis": "*"
+  }
+}
