@@ -52,6 +52,13 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
   if (res.cancelled) {
     return { ok: false, error: 'Cancelled', cancelled: true, stdout: res.stdout, stderr: res.stderr };
   }
+  // Heuristic: treat suspicious stderr as failure even if exit code was 0
+  const stderr = res.stderr || '';
+  const suspicious = /(^|\n)(error|fatal|not found|no such file|missing|traceback|syntax error|segmentation fault|denied|permission)/i.test(stderr) || /(^|\n)find: .*missing/i.test(stderr);
+  if (res.ok && suspicious) {
+    res.ok = false;
+    res.error = (stderr || 'stderr indicates error').trim().split('\n').slice(-2).join('\n');
+  }
   if (res.ok) return { ok: true, stdout: res.stdout, stderr: res.stderr };
 
   const interactive = res.timeout === 'idle' || detectInteractive(res.stdout, res.stderr);

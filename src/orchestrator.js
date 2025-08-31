@@ -272,14 +272,9 @@ export async function orchestrate({ userGoal, models, session, options = {}, ui 
           if (ui?.onLog) ui.onLog('Execution cancelled by user.');
           return { ok: false, error: 'cancelled' };
         }
-        // Fallback to classic executor for this task
-        const res = await execTask(task, { session, models, options, ui });
-        if (!res.ok) {
-          appendEvent(session, { type: 'task_failed', message: task.title, error: res.error });
-          return { ok: false, error: res.error };
-        }
-        stepDone = true;
-        break;
+        // No valid agent plan; try another cycle (allow model to replan)
+        if (ui?.onLog) ui.onLog('Agent plan invalid. Retrying this step...');
+        continue;
       }
 
       if (agentRes.next === 'cancel') {
