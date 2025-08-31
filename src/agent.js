@@ -27,7 +27,7 @@ Return JSON only with this shape:
 {"speak":["short status lines to show the user"],
  "actions":[ ToolAction ... ],
  "completedTasks":["T1","T2"],
- "next":"continue|ask_user|cancel|done",
+ "next":"continue|cancel|done",
  "complete": true|false,
  "final": "optional short summary/result for this step",
  "planUpdates": {"add":[Task], "remove":["Tid"], "note":"optional rationale"}}
@@ -44,8 +44,7 @@ Rules:
 - Prefer non-interactive flags and CI-friendly options.
 - Limit to at most 5 actions per cycle.
 - Prefer acting on the next pending tasks from the plan; include their IDs in completedTasks.
-- If information is missing, set next="ask_user" and include a clear, single-line question in speak[].
-- If the user asked to cancel or the plan is no longer valid, set next="cancel".
+- Avoid asking the user; make reasonable, safe assumptions and continue. Only use next="cancel" if proceeding would be destructive or clearly unsafe.
 - If all work appears complete, set next="done" and include a brief recap in speak[].`;
 }
 
@@ -90,10 +89,12 @@ async function execAction(action, ctx) {
       case 'write_file': {
         let content = action.content;
         if (!content && action.content_prompt) {
-          const code = await models.generateProWithContext(
+          const code = await withUICancel(ui, (signal) => models.generateProWithContext(
             codeGenPrompt({ instruction: action.content_prompt, context: `Path: ${action.path}` }),
             session,
-          );
+            0.2,
+            { signal },
+          ));
           content = code;
         }
         if (!content) throw new Error('No content provided for write_file');
@@ -104,10 +105,12 @@ async function execAction(action, ctx) {
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
-        const code = await models.generateProWithContext(
+        const code = await withUICancel(ui, (signal) => models.generateProWithContext(
           codeGenPrompt({ instruction: action.prompt, context: `Path: ${action.path}` }),
           session,
-        );
+          0.2,
+          { signal },
+        ));
         await writeFs(cwd, action.path, code);
         appendEvent(session, { type: 'write_file', summary: `Generated ${action.path}` });
         if (ui?.onLog) ui.onLog(`Generated file: ${action.path} (${code.length} bytes)`);
@@ -116,10 +119,12 @@ async function execAction(action, ctx) {
       }
       case 'edit_file': {
         const current = await readFs(cwd, action.path);
-        const updated = await models.generateProWithContext(
+        const updated = await withUICancel(ui, (signal) => models.generateProWithContext(
           editFilePrompt({ filepath: action.path, currentContent: current.content, instruction: action.instruction, context: '' }),
           session,
-        );
+          0.2,
+          { signal },
+        ));
         await writeFs(cwd, action.path, updated);
         appendEvent(session, { type: 'edit_file', summary: `Edited ${action.path}` });
         if (ui?.onLog) ui.onLog(`Edited file: ${action.path} (${updated.length} bytes)`);
@@ -186,7 +191,7 @@ export async function runProAgentCycle({ userGoal, plan, session, models, option
   }
 
   const prompt = buildAgentPrompt({ userGoal, plan, cwd: session.meta.cwd });
-  const text = await models.generateProWithContext(prompt, session, 0.2);
+  const text = await withUICancel(ui, (signal) => models.generateProWithContext(prompt, session, 0.2, { signal }));
   const parsed = safeParseJSON(text);
   if (!parsed || !Array.isArray(parsed.actions)) {
     if (ui?.onLog) ui.onLog('Agent did not return valid JSON actions.');

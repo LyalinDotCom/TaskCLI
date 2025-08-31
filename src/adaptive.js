@@ -25,6 +25,7 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
   if (ui?.onLog) ui.onLog(chalk.gray(`Executing command...`));
   if (ui?.onCommandStart) ui.onCommandStart(command);
   let killHandler = null;
+  let sigTermTimer; let sigKillTimer; let killed = false;
   const res = await runCommand(command, {
     cwd,
     env: baseEnv,
@@ -33,12 +34,20 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
     idleTimeoutMs: 15000,
     timeoutMs: 15 * 60 * 1000,
     onStart: (proc) => {
-      killHandler = () => { try { proc.kill('SIGINT'); } catch {} };
+      killHandler = () => {
+        if (killed) return;
+        try { proc.kill('SIGINT'); } catch {}
+        clearTimeout(sigTermTimer); clearTimeout(sigKillTimer);
+        sigTermTimer = setTimeout(() => { try { proc.kill('SIGTERM'); } catch {} }, 800);
+        sigKillTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 2000);
+        killed = true;
+      };
       if (ui?.onRegisterKill) ui.onRegisterKill(killHandler);
     },
   });
   if (ui?.onCommandDone) ui.onCommandDone({ code: res.code ?? 0, ok: !!res.ok });
   if (ui?.onRegisterKill) ui.onRegisterKill(null);
+  clearTimeout(sigTermTimer); clearTimeout(sigKillTimer);
   if (res.cancelled) {
     return { ok: false, error: 'Cancelled', cancelled: true, stdout: res.stdout, stderr: res.stderr };
   }

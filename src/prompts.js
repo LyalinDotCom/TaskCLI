@@ -21,9 +21,10 @@ REQUIREMENTS
 - Always include a short title and rationale for each task.
 
 CLARIFICATION POLICY (IMPORTANT)
-- Do NOT fabricate tasks when the goal is vague, ambiguous, or missing critical details (e.g., inputs like "test", "help", "code", or single words).
-- In such cases, return a single task of type "ask_user" with 1–3 precise questions that are necessary to proceed.
-- Examples of when to ask_user: unknown language/framework, missing target file/dir, unclear deliverable, or conflicting constraints.
+- Only use ask_user when the goal is severely vague/ambiguous or missing critical decisions that materially change the plan.
+- Examples of SEVERELY vague inputs: "test", "help", a single word, or no concrete deliverable/context.
+- Otherwise, DO NOT ask the user. Proceed with safe, standard assumptions (e.g., conventional defaults, current working directory) and let the executor (Pro) resolve details.
+- Never turn a reasonably specific request into questions if you can plan actionable steps safely.
 
 
 GOAL
@@ -36,7 +37,7 @@ Return JSON only, like:
   {"id":"T3","type":"generate_file_from_prompt","title":"Main module","rationale":"Core logic","path":"src/index.js","prompt":"Implement X with Y interfaces"}
 ]}
 
-If the goal is vague or ambiguous, return:
+If the goal is severely vague, return:
 {"tasks":[
   {"id":"T1","type":"ask_user","title":"Clarify requirements","rationale":"The goal is too vague to plan safely.","questions":[
     "What do you want to build or test specifically?",

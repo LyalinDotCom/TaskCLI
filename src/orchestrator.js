@@ -10,6 +10,7 @@ import { smartRunCommand } from './adaptive.js';
 import { webSearch } from './tools/search.js';
 import { printTaskList, startTask, taskSuccess, taskFailure } from './ui.js';
 import { runProAgentCycle } from './agent.js';
+import { withUICancel, CancelledError } from './utils/cancel.js';
 
 function safeParseJSON(text) {
   try {
@@ -26,7 +27,7 @@ async function planTasks({ userGoal, models, session, ui }) {
   const memorySummary = summarizeMemory(session);
   const prompt = planningPrompt({ goal: userGoal, memorySummary, cwd: session.meta.cwd });
   if (ui?.onLog) ui.onLog('🧠 Planning with Gemini Flash...');
-  const text = await models.generateWithFlash(prompt, 0.3);
+  const text = await withUICancel(ui, (signal) => models.generateWithFlash(prompt, 0.3, { signal }));
   const parsed = safeParseJSON(text);
   if (!parsed || !Array.isArray(parsed.tasks)) {
     throw new Error('Planner did not return valid JSON task list.');
@@ -72,10 +73,12 @@ async function execTask(task, ctx) {
       case 'write_file': {
         let content = task.content;
         if (!content && task.content_prompt) {
-          const code = await models.generateProWithContext(
+          const code = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(
             codeGenPrompt({ instruction: task.content_prompt, context: `Path: ${task.path}` }),
             session,
-          );
+            0.2,
+            { signal },
+          ));
           content = code;
         }
         if (!content) throw new Error('No content to write.');
@@ -87,10 +90,12 @@ async function execTask(task, ctx) {
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
-        const code = await models.generateProWithContext(
+        const code = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(
           codeGenPrompt({ instruction: task.prompt, context: `Path: ${task.path}` }),
           session,
-        );
+          0.2,
+          { signal },
+        ));
         await writeFs(session.meta.cwd, task.path, code);
         appendEvent(session, { type: 'write_file', summary: `Generated ${task.path}` });
         if (ctx.ui?.onLog) ctx.ui.onLog(`Generated file: ${task.path} (${code.length} bytes)`);
@@ -100,10 +105,12 @@ async function execTask(task, ctx) {
       }
       case 'edit_file': {
         const current = await readFs(session.meta.cwd, task.path);
-        const updated = await models.generateProWithContext(
+        const updated = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(
           editFilePrompt({ filepath: task.path, currentContent: current.content, instruction: task.instruction, context: '' }),
           session,
-        );
+          0.2,
+          { signal },
+        ));
         await writeFs(session.meta.cwd, task.path, updated);
         appendEvent(session, { type: 'edit_file', summary: `Edited ${task.path}` });
         if (ctx.ui?.onLog) ctx.ui.onLog(`Edited file: ${task.path} (${updated.length} bytes)`);
@@ -137,7 +144,7 @@ Provide:
 Listing:
 ${res.stdout.slice(-50000)}`;
           try {
-            const summary = await models.generateProWithContext(summaryPrompt, session, 0.2);
+          const summary = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(summaryPrompt, session, 0.2, { signal }));
             if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, summary);
             else taskSuccess(task);
           } catch {
@@ -178,11 +185,12 @@ ${res.stdout.slice(-50000)}`;
         const timeoutMs = Number(process.env.PRO_CLOSEOUT_TIMEOUT_MS || 15000);
         let finalNote;
         try {
-          finalNote = await Promise.race([
-            models.generateProWithContext(closeText, session, 0.2),
+          finalNote = await withUICancel(ctx.ui, (signal) => Promise.race([
+            models.generateProWithContext(closeText, session, 0.2, { signal }),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Closeout timed out')), timeoutMs)),
-          ]);
+          ]));
         } catch (e) {
+          if (e && e.cancelled) throw e;
           // Fallback local closeout summary
           const items = [];
           const hist = session.history || [];
@@ -202,6 +210,7 @@ ${res.stdout.slice(-50000)}`;
         throw new Error(`Unknown task type: ${task.type}`);
     }
   } catch (error) {
+    if (error && error.cancelled) return { ok: false, error: 'cancelled' };
     if (ctx.ui?.onTaskFailure) ctx.ui.onTaskFailure(task, error);
     else taskFailure(task, error);
     return { ok: false, error: error?.message || String(error) };

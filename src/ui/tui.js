@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, Box, Text, useApp, useInput } from 'ink';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import TextInput from 'ink-text-input';
@@ -89,20 +90,67 @@ export function App({ session, models, initialInput, options }) {
   const [progressText, setProgressText] = React.useState('Idle');
   const [bannerText, setBannerText] = React.useState('');
   const [bannerColor, setBannerColor] = React.useState('yellow');
+  const [canceling, setCanceling] = React.useState(false);
+  const HISTORY_MAX = Number(process.env.TASKCLI_HISTORY_SIZE || 20);
+  const [history, setHistory] = React.useState([]);
+  const [histIdx, setHistIdx] = React.useState(-1); // -1 means current (blank)
 
   const MAX_MESSAGES = 150;
   const MAX_CMD_CHARS = 4000;
   const MAX_QUEUE_ITEMS = 5;
 
   React.useEffect(() => {
+    // Load persistent history on mount
+    try {
+      const hp = historyPath();
+      if (fs.existsSync(hp)) {
+        const lines = fs.readFileSync(hp, 'utf8').split(/\r?\n/).filter(Boolean);
+        // newest first in file
+        setHistory(lines.slice(0, HISTORY_MAX));
+      }
+    } catch {}
     // No default system message; header + tips provide context
   }, []);
+
+  function baseDir() {
+    // Mirror session.js: prefer ~/.taskcli, else fall back to repo TaskCLI/.taskcli
+    const primary = path.join(os.homedir(), '.taskcli');
+    try { fs.mkdirSync(primary, { recursive: true }); return primary; } catch {}
+    const alt = path.join(process.cwd(), 'TaskCLI', '.taskcli');
+    try { fs.mkdirSync(alt, { recursive: true }); return alt; } catch {}
+    return primary;
+  }
+  function historyPath() { return path.join(baseDir(), 'history.txt'); }
+  function saveHistory(list) {
+    try { fs.writeFileSync(historyPath(), list.slice(0, HISTORY_MAX).join('\n'), 'utf8'); } catch {}
+  }
+  function pushHistory(entry) {
+    const e = String(entry || '').trim();
+    if (!e) return;
+    setHistory((prev) => {
+      const withoutDup = prev.filter((x) => x !== e);
+      const next = [e, ...withoutDup].slice(0, HISTORY_MAX);
+      try { saveHistory(next); } catch {}
+      return next;
+    });
+  }
 
   // Double-Escape to cancel current run
   const [lastEscAt, setLastEscAt] = React.useState(0);
   const killRef = React.useRef(null);
   useInput((input, key) => {
     if (key.escape) {
+      if (!busy) {
+        // Clear input when idle
+        if (inputStateRef.current && inputStateRef.current.length > 0) {
+          setInput('');
+          setBannerText('Input cleared');
+          setBannerColor('gray');
+          return;
+        }
+        // If already empty, do nothing
+        return;
+      }
       const now = Date.now();
       const windowMs = Number(process.env.TASKCLI_ESC_DOUBLE_MS || 600);
       if (now - lastEscAt <= windowMs) {
@@ -110,14 +158,40 @@ export function App({ session, models, initialInput, options }) {
         setLastEscAt(0);
         setBannerText('Cancel requested. Attempting to stop…');
         setBannerColor('red');
+        setCanceling(true);
         try { if (typeof killRef.current === 'function') killRef.current(); } catch {}
       } else {
         setLastEscAt(now);
         setBannerText('Press Esc again to cancel…');
         setBannerColor('yellow');
       }
+      return;
+    }
+    if (key.upArrow) {
+      // Navigate history: most recent is index 0
+      const maxIdx = history.length - 1;
+      if (maxIdx < 0) return;
+      const next = histIdx < maxIdx ? histIdx + 1 : maxIdx;
+      setHistIdx(next);
+      setInput(history[next] || '');
+      return;
+    }
+    if (key.downArrow) {
+      if (histIdx <= 0) {
+        setHistIdx(-1);
+        setInput('');
+      } else {
+        const next = histIdx - 1;
+        setHistIdx(next);
+        setInput(history[next] || '');
+      }
+      return;
     }
   });
+
+  // Keep a ref to current input for escape clear logic
+  const inputStateRef = React.useRef(input);
+  React.useEffect(() => { inputStateRef.current = input; }, [input]);
 
   function appendMessage(msg) {
     setMessages((m) => {
@@ -159,9 +233,15 @@ export function App({ session, models, initialInput, options }) {
           appendMessage({ role: 'tasks', text: snap });
           appendMessage({ role: 'spacer' });
         }
-        const vis = tasks.filter((x) => x.type !== 'session_close');
-        const idx = Math.max(0, vis.findIndex((x) => x.id === task.id));
-        setProgressText(`Step ${idx + 1} of ${vis.length} — ${task.title}`);
+        // Progress bar text
+        if (task.type === 'session_close') {
+          setProgressText('Closeout — preparing summary');
+        } else {
+          const vis = tasks.filter((x) => x.type !== 'session_close');
+          const idx = vis.findIndex((x) => x.id === task.id);
+          const pos = idx >= 0 ? idx + 1 : Math.max(1, Object.values(ns).filter((v) => v === 'done').length + 1);
+          setProgressText(vis.length > 0 ? `Step ${pos} of ${vis.length} — ${task.title}` : `Working — ${task.title}`);
+        }
         setBannerText('');
         return ns;
       });
@@ -179,9 +259,14 @@ export function App({ session, models, initialInput, options }) {
           appendMessage({ role: 'result', text: preview.length > 2000 ? preview.slice(0, 2000) + '\n…' : preview });
         }
         appendMessage({ role: 'sep' });
-        const vis = tasks.filter((x) => x.type !== 'session_close');
-        const idx = Math.max(0, vis.findIndex((x) => x.id === task.id));
-        setProgressText(`Completed ${idx + 1}/${vis.length} — ${task.title}`);
+        if (task.type === 'session_close') {
+          setProgressText('Closeout complete');
+        } else {
+          const vis = tasks.filter((x) => x.type !== 'session_close');
+          const idx = vis.findIndex((x) => x.id === task.id);
+          const pos = idx >= 0 ? idx + 1 : Math.max(1, Object.values(ns).filter((v) => v === 'done').length);
+          setProgressText(vis.length > 0 ? `Completed ${pos}/${vis.length} — ${task.title}` : `Completed — ${task.title}`);
+        }
         return ns;
       });
     },
@@ -218,8 +303,9 @@ export function App({ session, models, initialInput, options }) {
         appendMessage({ role: 'system', text: `Saved full command output to: ${p}` });
       } catch {}
       appendMessage({ role: 'sep' });
+      setCanceling(false);
     },
-    onRegisterKill: (fn) => { killRef.current = fn || null; },
+    onRegisterKill: (fn) => { killRef.current = fn || null; if (!fn) setCanceling(false); },
     onComplete: (count) => appendMessage({ role: 'agent', text: `Completed ${count} tasks.` }),
     shouldCancel: () => !!cancelRequested,
     drainQueuedInputs: () => {
@@ -246,6 +332,7 @@ export function App({ session, models, initialInput, options }) {
       saveSession(session);
     } finally {
       setBusy(false);
+      setCanceling(false);
       // Drain queued inputs
       setQueue((q) => {
         const copy = [...q];
@@ -313,6 +400,8 @@ export function App({ session, models, initialInput, options }) {
           const trimmed = val.trim();
           if (!trimmed) return;
           setInput('');
+          pushHistory(trimmed);
+          setHistIdx(-1);
           if (busy) {
             setQueue((q) => [...q, trimmed]);
           } else {
@@ -326,7 +415,12 @@ export function App({ session, models, initialInput, options }) {
       Box,
       { justifyContent: 'space-between' },
       h(Text, { color: 'cyan' }, progressText || 'Ready'),
-      bannerText ? h(Text, { color: bannerColor }, bannerText) : h(Text, { color: 'gray' }, `${tildePath(session?.meta?.cwd || process.cwd())}  |  ${session?.meta?.proModel || ''}`),
+      canceling
+        ? h(Text, { color: 'red' }, h(Spinner), ' Cancelling...')
+        : (bannerText
+            ? h(Text, { color: bannerColor }, bannerText)
+            : h(Text, { color: 'gray' }, `${tildePath(session?.meta?.cwd || process.cwd())}  |  ${session?.meta?.proModel || ''}`)
+          ),
     ),
   );
 }
