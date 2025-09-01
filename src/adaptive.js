@@ -61,6 +61,12 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
   }
   if (res.ok) return { ok: true, stdout: res.stdout, stderr: res.stderr };
 
+  // If the command failed due to invalid cwd or command not found, don't try to retry
+  if (res.error && (res.error.includes('does not exist') || res.error.includes('Command not found') || res.error.includes('Invalid working directory'))) {
+    if (ui?.onLog) ui.onLog(chalk.red(`Error: ${res.error}`));
+    return { ok: false, error: res.error, stdout: res.stdout, stderr: res.stderr };
+  }
+
   const interactive = res.timeout === 'idle' || detectInteractive(res.stdout, res.stderr);
   const failure = !interactive;
 
@@ -72,6 +78,7 @@ export async function smartRunCommand({ command, cwd, ui, models, options = {}, 
     interactive,
     stdoutTail: (res.stdout || '').slice(-2000),
     stderrTail: (res.stderr || '').slice(-2000),
+    error: res.error || '',
   };
   const analysisPrompt = `You are the planning brain (Gemini Flash) helping a CLI detect issues when running commands. Classify the situation and suggest a strategy.
 Return compact JSON only:
@@ -85,7 +92,9 @@ Return compact JSON only:
   if (classification && ui?.onLog) {
     ui.onLog(`Flash says: ${classification.status || 'unknown'} - ${classification.summary || ''}`);
     if (classification.isRecoverable === false) {
-      return { ok: false, error: classification.summary || 'Non-recoverable error', stdout: res.stdout, stderr: res.stderr };
+      // Include the original error in the message
+      const fullError = res.error ? `${classification.summary || 'Non-recoverable error'}\n${res.error}` : (classification.summary || 'Non-recoverable error');
+      return { ok: false, error: fullError, stdout: res.stdout, stderr: res.stderr };
     }
   }
 
