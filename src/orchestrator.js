@@ -128,7 +128,11 @@ async function execTask(task, ctx) {
       }
       case 'run_command': {
         const confirm = task.confirm === undefined ? true : !!task.confirm;
-        const cwd = task.cwd ? task.cwd : session.meta.cwd;
+        // If task.cwd is provided and not absolute, resolve it relative to session cwd
+        let cwd = session.meta.cwd;
+        if (task.cwd) {
+          cwd = path.isAbsolute(task.cwd) ? task.cwd : path.join(session.meta.cwd, task.cwd);
+        }
         if (confirm && !options.autoConfirm && ctx.ui?.onLog) {
           ctx.ui.onLog(chalk.yellow(`About to run: ${task.command}`));
           ctx.ui.onLog(chalk.gray('Use --yes to auto-confirm in the future.'));

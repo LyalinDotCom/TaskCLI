@@ -20,6 +20,7 @@ REQUIREMENTS
 - Use relative paths under the working dir. Ensure parent folders exist implicitly.
 - Always include a short title and rationale for each task.
 - For exploration tasks, use explicit commands like 'ls -la' or 'find . -type f -name "*.js"' instead of expecting the agent to read non-existent files.
+- IMPORTANT: When using create-next-app, create-react-app, or similar tools, remember they convert project names to kebab-case (e.g., "MyApp" becomes "my-app", "TaskNextApp01" becomes "task-next-app-01"). Use the kebab-case name for subsequent tasks that reference the created directory.
 
 CLARIFICATION POLICY (IMPORTANT)
 - Only use ask_user when the goal is severely vague/ambiguous or missing critical decisions that materially change the plan.
@@ -33,9 +34,9 @@ ${goal}
 
 Return JSON only, like:
 {"tasks":[
-  {"id":"T1","type":"run_command","title":"List directory contents","rationale":"Explore project structure","command":"ls -la"},
-  {"id":"T2","type":"run_command","title":"Find all JS files","rationale":"Locate JavaScript code","command":"find . -type f -name \"*.js\" | head -20"},
-  {"id":"T3","type":"generate_file_from_prompt","title":"Summarize findings","rationale":"Document discovered projects","path":"project-summary.md","prompt":"Based on the file listing from previous steps, create a markdown summary of the projects found"}
+  {"id":"T1","type":"run_command","title":"Create Next.js app","rationale":"Initialize project","command":"npx create-next-app@latest my-app --typescript --tailwind --app --no-src-dir --import-alias '@/*' --turbopack"},
+  {"id":"T2","type":"run_command","title":"Install dependencies","rationale":"Ensure packages are installed","command":"npm install","cwd":"my-app"},
+  {"id":"T3","type":"generate_file_from_prompt","title":"Create component","rationale":"Add custom component","path":"my-app/components/Button.tsx","prompt":"Create a reusable Button component with TypeScript"}
 ]}
 
 If the goal is severely vague, return:
