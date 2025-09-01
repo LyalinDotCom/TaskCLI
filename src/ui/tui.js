@@ -322,6 +322,9 @@ export function App({ session, models, initialInput, options }) {
     setBusy(true);
     setCancelRequested(false);
     setCmdBuffer('');
+    // Clear tasks and task status for new orchestration
+    setTasks([]);
+    setTaskStatus({});
     setMessages((m) => [...m, { role: 'sep' }, { role: 'user', text: goal }, { role: 'spacer' }]);
     try {
       const res = await orchestrate({ userGoal: goal, models, session, options, ui });
