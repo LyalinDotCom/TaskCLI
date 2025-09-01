@@ -47,7 +47,6 @@ Thumbs.db
 
 # Test workspace
 test-workspace/
-TaskCLI/test-workspace/
 
 # Local npm cache for packing
 .npm-cache/
