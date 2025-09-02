@@ -21,6 +21,7 @@ REQUIREMENTS
 - Always include a short title and rationale for each task.
 - For exploration tasks, use explicit commands like 'ls -la' or 'find . -type f -name "*.js"' instead of expecting the agent to read non-existent files.
 - IMPORTANT: When using create-next-app, create-react-app, or similar tools, remember they convert project names to kebab-case (e.g., "MyApp" becomes "my-app", "TaskNextApp01" becomes "task-next-app-01"). Use the kebab-case name for subsequent tasks that reference the created directory.
+- IMPORTANT: Pay attention to the "Created directories" and "Created/modified files" in the memory summary. When referencing files from previous commands, use the correct paths that were created.
 
 CLARIFICATION POLICY (IMPORTANT)
 - Only use ask_user when the goal is severely vague/ambiguous or missing critical decisions that materially change the plan.

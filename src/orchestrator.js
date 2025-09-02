@@ -141,7 +141,9 @@ async function execTask(task, ctx) {
           console.log(chalk.gray('Use --yes to auto-confirm in the future.'));
         }
         const res = await smartRunCommand({ command: task.command, cwd, ui: ctx.ui, models, options, session });
-        appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}`, stdout: res.stdout, stderr: res.stderr });
+        // Include working directory in summary if it's different from session cwd
+        const cwdNote = cwd !== session.meta.cwd ? ` (in ${path.relative(session.meta.cwd, cwd)})` : '';
+        appendEvent(session, { type: 'run_command', summary: `${res.ok ? 'Ran' : 'Failed'}: ${task.command}${cwdNote}`, stdout: res.stdout, stderr: res.stderr, cwd });
         if (!res.ok) throw new Error(res.error || 'Command failed');
         // If the command looks like a directory listing, summarize results with Pro
         const looksLikeList = /(^|\s)(ls|find|tree|dir)(\s|$)/.test(task.command);

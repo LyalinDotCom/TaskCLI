@@ -76,7 +76,51 @@ export function upsertTask(session, task) {
 }
 
 export function summarizeMemory(session) {
-  const last = session.history.slice(-6);
-  const hints = last.map((e) => `${e.type}: ${e.summary || e.message || ''}`).join('\n');
-  return hints || 'No prior history.';
+  const last = session.history.slice(-10);
+  const hints = [];
+  
+  // Track important context like created directories and files
+  const createdDirs = new Set();
+  const createdFiles = new Set();
+  
+  for (const e of session.history) {
+    if (e.type === 'run_command' && e.summary) {
+      // Track directory creation from commands
+      const createNextMatch = e.summary.match(/create-next-app.*?\s+(\S+)/);
+      if (createNextMatch) {
+        createdDirs.add(createNextMatch[1]);
+      }
+      if (e.summary.includes('mkdir ')) {
+        const dirMatch = e.summary.match(/mkdir\s+(\S+)/);
+        if (dirMatch) createdDirs.add(dirMatch[1]);
+      }
+    } else if (e.type === 'write_file' || e.type === 'edit_file') {
+      // Track file creations/edits
+      const pathMatch = e.summary?.match(/(?:Wrote|Generated|Edited)\s+(.+)$/);
+      if (pathMatch) createdFiles.add(pathMatch[1]);
+    }
+  }
+  
+  // Add context about created resources
+  if (createdDirs.size > 0) {
+    hints.push(`Created directories: ${Array.from(createdDirs).join(', ')}`);
+  }
+  if (createdFiles.size > 0 && createdFiles.size <= 5) {
+    hints.push(`Created/modified files: ${Array.from(createdFiles).join(', ')}`);
+  } else if (createdFiles.size > 5) {
+    const samples = Array.from(createdFiles).slice(-5);
+    hints.push(`Created/modified ${createdFiles.size} files including: ${samples.join(', ')}`);
+  }
+  
+  // Add recent history
+  hints.push('\nRecent actions:');
+  for (const e of last) {
+    if (e.type === 'user_goal') {
+      hints.push(`User goal: ${e.message}`);
+    } else if (e.summary) {
+      hints.push(`${e.type}: ${e.summary}`);
+    }
+  }
+  
+  return hints.length > 1 ? hints.join('\n') : 'No prior history.';
 }

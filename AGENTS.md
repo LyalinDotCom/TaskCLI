@@ -127,8 +127,14 @@ Tools in `src/tools/` follow a consistent pattern:
 **Fix**: 
 - Added task and task status clearing in `src/ui/tui.js:runOrchestrator()` function when starting new orchestration
 - Clear session.tasks array at the start of `orchestrate()` in `src/orchestrator.js`
-- Use tasksRef to ensure callbacks always have the latest tasks array
+- Use tasksRef to ensure callbacks always have the latest tasks array (including onTaskFailure)
+- All task display callbacks now use tasksRef.current for accurate task lists
 
 ### Path Resolution in Multi-Step Tasks
 **Issue**: When tasks create files in subdirectories, subsequent tasks may lose context of the actual file location.
-**Workaround**: The planner should maintain awareness of project structure from command outputs. Tasks should use explicit paths relative to the working directory.
+**Fix**:
+- Enhanced `summarizeMemory()` in `src/session.js` to track created directories and files from command history
+- Memory summary now includes "Created directories" and "Created/modified files" sections
+- Command summaries include working directory context when different from session cwd
+- Planning prompt updated to emphasize using correct paths from memory summary
+- Session history now provides comprehensive context about project structure

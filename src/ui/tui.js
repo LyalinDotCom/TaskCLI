@@ -278,7 +278,7 @@ export function App({ session, models, initialInput, options }) {
     onTaskFailure: (task, error) => {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'failed' };
-        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasks, ns) });
+        appendMessage({ role: 'tasks', text: renderTasksSnapshot(tasksRef.current, ns) });
         appendMessage({ role: 'spacer' });
         return ns;
       });
