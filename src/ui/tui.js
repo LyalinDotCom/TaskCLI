@@ -8,6 +8,7 @@ import Spinner from 'ink-spinner';
 import chalk from 'chalk';
 import { orchestrate } from '../orchestrator.js';
 import { saveSession, saveCommandOutput } from '../session.js';
+import { isSlashCommand, processSlashCommand, getCommandSuggestions } from '../slashCommands.js';
 
 const h = React.createElement;
 
@@ -95,6 +96,7 @@ export function App({ session, models, initialInput, options }) {
   const HISTORY_MAX = Number(process.env.TASKCLI_HISTORY_SIZE || 20);
   const [history, setHistory] = React.useState([]);
   const [histIdx, setHistIdx] = React.useState(-1); // -1 means current (blank)
+  const [commandSuggestions, setCommandSuggestions] = React.useState([]);
 
   const MAX_MESSAGES = 150;
   const MAX_CMD_CHARS = 4000;
@@ -399,12 +401,52 @@ export function App({ session, models, initialInput, options }) {
       h(Text, null, ' '),
       h(TextInput, {
         value: input,
-        onChange: setInput,
-        placeholder: 'Describe your goal...',
+        onChange: (val) => {
+          setInput(val);
+          // Show command suggestions when typing /
+          if (val.startsWith('/')) {
+            const suggestions = getCommandSuggestions(val);
+            setCommandSuggestions(suggestions);
+          } else {
+            setCommandSuggestions([]);
+          }
+        },
+        placeholder: 'Describe your goal or type / for commands...',
         onSubmit: (val) => {
           const trimmed = val.trim();
           if (!trimmed) return;
+          
+          // Handle slash commands
+          if (isSlashCommand(trimmed)) {
+            const result = processSlashCommand(trimmed, session);
+            
+            // Add command to history
+            pushHistory(trimmed);
+            setHistIdx(-1);
+            setInput('');
+            setCommandSuggestions([]);
+            
+            // Show result message
+            if (result.message) {
+              appendMessage({ role: 'system', text: result.message });
+            }
+            
+            // Handle special actions
+            if (result.action === 'clear_messages') {
+              setMessages([]);
+            }
+            
+            // Save session if config changed
+            if (result.success && trimmed.startsWith('/thinkingBudget')) {
+              saveSession(session);
+            }
+            
+            return;
+          }
+          
+          // Regular goal handling
           setInput('');
+          setCommandSuggestions([]);
           pushHistory(trimmed);
           setHistIdx(-1);
           if (busy) {
@@ -415,6 +457,16 @@ export function App({ session, models, initialInput, options }) {
         },
       }),
     ),
+    // Command suggestions
+    commandSuggestions.length > 0
+      ? h(
+          Box,
+          { marginTop: 0, marginBottom: 0 },
+          h(Text, { color: 'gray' }, 'Commands: '),
+          h(Text, { color: 'cyan' }, commandSuggestions.slice(0, 5).join(', ')),
+          commandSuggestions.length > 5 ? h(Text, { color: 'gray' }, ` (+${commandSuggestions.length - 5} more)`) : null
+        )
+      : null,
     // Bottom status bar row (pinned at very bottom)
     h(
       Box,

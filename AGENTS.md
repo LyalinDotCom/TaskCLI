@@ -83,6 +83,18 @@ The project uses integration testing through smoke tests rather than unit tests:
 - Memory summarization for context management across tasks
 - **Important**: Task lists are cleared between orchestration runs in TUI mode to prevent task persistence issues
 
+## Slash Commands
+
+TaskCLI supports slash commands for runtime configuration and control:
+
+- `/thinkingBudget <number>` - Set Gemini Pro thinking budget (tokens, -1 to disable)
+- `/model` - Show current model configuration
+- `/session` - Show session information
+- `/clear` - Clear message history
+- `/help` - Show all available commands
+
+Type `/` to see command suggestions. Commands are case-insensitive.
+
 ## Important Patterns
 
 ### Tool Execution

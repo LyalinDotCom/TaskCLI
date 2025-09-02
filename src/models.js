@@ -97,13 +97,19 @@ export async function loadModels() {
     const wrapped = `${PRO_SYSTEM}\n\n${prompt}`;
     const modelId = `googleai/${proModel}`;
     if (gen.ai && typeof gen.ai.generate === 'function') {
-      // Always use thinking with 8000 token budget for Gemini 2.5 Pro
-      const budget = 8000;
+      // Use session-based thinking budget or default to 8000
+      const session = options.session;
+      const budget = session?.config?.thinkingBudget ?? 8000;
       try {
+        // Only use thinking if budget is not -1
+        const config = budget === -1 
+          ? { temperature }
+          : { temperature, thinkingConfig: { thinkingBudget: budget } };
+        
         const response = await gen.ai.generate({
           model: modelId,
           prompt: wrapped,
-          config: { temperature, thinkingConfig: { thinkingBudget: budget } },
+          config,
           signal: options.signal,
         });
         return response.text;
@@ -127,13 +133,18 @@ export async function loadModels() {
     const wrapped = `${PRO_SYSTEM}\n\nContext Transcript (all prior steps):\n${transcript || '(no prior history)'}\n\n${prompt}`;
     const modelId = `googleai/${proModel}`;
     if (gen.ai && typeof gen.ai.generate === 'function') {
-      // Always use thinking with 8000 token budget for Gemini 2.5 Pro
-      const budget = 8000;
+      // Use session-based thinking budget or default to 8000
+      const budget = session?.config?.thinkingBudget ?? 8000;
       try {
+        // Only use thinking if budget is not -1
+        const config = budget === -1 
+          ? { temperature }
+          : { temperature, thinkingConfig: { thinkingBudget: budget } };
+        
         const response = await gen.ai.generate({
           model: modelId,
           prompt: wrapped,
-          config: { temperature, thinkingConfig: { thinkingBudget: budget } },
+          config,
           signal: options.signal,
         });
         return response.text;
