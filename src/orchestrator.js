@@ -235,6 +235,10 @@ ${res.stdout.slice(-50000)}`;
 
 export async function orchestrate({ userGoal, models, session, options = {}, ui }) {
   appendEvent(session, { type: 'user_goal', message: userGoal });
+  
+  // Clear tasks from previous runs to prevent confusion
+  session.tasks = [];
+  
   let plan;
   try {
     plan = await planTasks({ userGoal, models, session, ui });

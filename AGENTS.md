@@ -124,7 +124,10 @@ Tools in `src/tools/` follow a consistent pattern:
 
 ### Task List Persistence Between Runs
 **Issue**: Tasks from previous runs were persisting and displaying in new orchestration runs.
-**Fix**: Added task and task status clearing in `src/ui/tui.js:runOrchestrator()` function when starting new orchestration.
+**Fix**: 
+- Added task and task status clearing in `src/ui/tui.js:runOrchestrator()` function when starting new orchestration
+- Clear session.tasks array at the start of `orchestrate()` in `src/orchestrator.js`
+- Use tasksRef to ensure callbacks always have the latest tasks array
 
 ### Path Resolution in Multi-Step Tasks
 **Issue**: When tasks create files in subdirectories, subsequent tasks may lose context of the actual file location.

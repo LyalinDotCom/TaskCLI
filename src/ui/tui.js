@@ -82,6 +82,7 @@ export function App({ session, models, initialInput, options }) {
   const [busy, setBusy] = React.useState(false);
   const [messages, setMessages] = React.useState([]);
   const [tasks, setTasks] = React.useState([]);
+  const tasksRef = React.useRef([]);
   const [taskStatus, setTaskStatus] = React.useState({});
   const [cmdBuffer, setCmdBuffer] = React.useState('');
   const [lastCommand, setLastCommand] = React.useState('');
@@ -97,6 +98,11 @@ export function App({ session, models, initialInput, options }) {
   const [history, setHistory] = React.useState([]);
   const [histIdx, setHistIdx] = React.useState(-1); // -1 means current (blank)
   const [commandSuggestions, setCommandSuggestions] = React.useState([]);
+  
+  // Keep tasksRef in sync with tasks state
+  React.useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   const MAX_MESSAGES = 150;
   const MAX_CMD_CHARS = 4000;
@@ -227,7 +233,7 @@ export function App({ session, models, initialInput, options }) {
     onTaskStart: (task) => {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'running' };
-        const snap = renderTasksSnapshot(tasks, ns);
+        const snap = renderTasksSnapshot(tasksRef.current, ns);
         if (snap.trim().length > 0) {
           appendMessage({ role: 'tasks', text: snap });
           appendMessage({ role: 'spacer' });
@@ -236,7 +242,7 @@ export function App({ session, models, initialInput, options }) {
         if (task.type === 'session_close') {
           setProgressText('Closeout — preparing summary');
         } else {
-          const vis = tasks.filter((x) => x.type !== 'session_close');
+          const vis = tasksRef.current.filter((x) => x.type !== 'session_close');
           const idx = vis.findIndex((x) => x.id === task.id);
           const pos = idx >= 0 ? idx + 1 : Math.max(1, Object.values(ns).filter((v) => v === 'done').length + 1);
           setProgressText(vis.length > 0 ? `Step ${pos} of ${vis.length} — ${task.title}` : `Working — ${task.title}`);
@@ -248,7 +254,7 @@ export function App({ session, models, initialInput, options }) {
     onTaskSuccess: (task, maybeData) => {
       setTaskStatus((s) => {
         const ns = { ...s, [task.id]: 'done' };
-        const snap = renderTasksSnapshot(tasks, ns);
+        const snap = renderTasksSnapshot(tasksRef.current, ns);
         if (snap.trim().length > 0) {
           appendMessage({ role: 'tasks', text: snap });
           appendMessage({ role: 'spacer' });
@@ -261,7 +267,7 @@ export function App({ session, models, initialInput, options }) {
         if (task.type === 'session_close') {
           setProgressText('Closeout complete');
         } else {
-          const vis = tasks.filter((x) => x.type !== 'session_close');
+          const vis = tasksRef.current.filter((x) => x.type !== 'session_close');
           const idx = vis.findIndex((x) => x.id === task.id);
           const pos = idx >= 0 ? idx + 1 : Math.max(1, Object.values(ns).filter((v) => v === 'done').length);
           setProgressText(vis.length > 0 ? `Completed ${pos}/${vis.length} — ${task.title}` : `Completed — ${task.title}`);
