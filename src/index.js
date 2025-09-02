@@ -31,7 +31,8 @@ function loadEnv() {
 }
 
 function parseArgs(argv) {
-  const args = { interactive: true, headless: false, yes: false, flashModel: process.env.FLASH_MODEL || 'gemini-2.5-flash', proModel: process.env.PRO_MODEL || 'gemini-2.5-pro', cwd: process.cwd() };
+  // Fixed models - no overrides allowed
+  const args = { interactive: true, headless: false, yes: false, flashModel: 'gemini-2.5-flash', proModel: 'gemini-2.5-pro', cwd: process.cwd() };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -39,8 +40,9 @@ function parseArgs(argv) {
     else if (a === '--headless' || a === '--no-ui') { args.headless = true; args.interactive = false; }
     else if (a === '--doctor') args.doctor = true;
     else if (a === '--yes' || a === '-y') args.yes = true;
-    else if ((a === '--flash-model' || a === '--flash') && argv[i + 1]) { args.flashModel = argv[++i]; }
-    else if ((a === '--pro-model' || a === '--pro') && argv[i + 1]) { args.proModel = argv[++i]; }
+    // Skip model override arguments but consume their values to avoid treating them as goals
+    else if ((a === '--flash-model' || a === '--flash') && argv[i + 1]) { i++; } // Skip but ignore
+    else if ((a === '--pro-model' || a === '--pro') && argv[i + 1]) { i++; } // Skip but ignore
     else if ((a === '--cwd') && argv[i + 1]) { args.cwd = path.resolve(argv[++i]); }
     else if (a === '-h' || a === '--help') args.help = true;
     else rest.push(a);
@@ -58,13 +60,13 @@ function printHelp() {
     `      --headless      Run without UI (command-line mode)\n` +
     `      --doctor       Run environment checks\n` +
     `  -y, --yes           Auto-confirm shell commands\n` +
-    `  --flash-model NAME  Model for planning (default: gemini-2.5-flash)\n` +
-    `  --pro-model NAME    Model for execution (default: gemini-2.5-pro)\n` +
     `  --cwd PATH          Working directory for tasks\n` +
     `  -h, --help          Show help\n\n` +
-    `Env:\n` +
-    `  GEMINI_API_KEY or GOOGLE_API_KEY         Google AI key (Genkit)\n` +
-    `  FLASH_MODEL, PRO_MODEL                   Override defaults\n`);
+    `Models:\n` +
+    `  Planning: Gemini 2.5 Flash (fixed)\n` +
+    `  Execution: Gemini 2.5 Pro with 8000 token thinking budget (fixed)\n\n` +
+    `Environment:\n` +
+    `  GEMINI_API_KEY or GOOGLE_API_KEY    Required for Google AI access\n`);
 }
 
 export async function main() {
@@ -78,12 +80,12 @@ export async function main() {
     console.log(chalk.yellow('Warning: GEMINI_API_KEY or GOOGLE_API_KEY is not set. Model calls will fail.'));
   }
 
-  // Prepare session
+  // Prepare session with fixed models
   ensureSessionDir();
-  const session = newSession({ cwd: args.cwd, flashModel: args.flashModel, proModel: args.proModel });
+  const session = newSession({ cwd: args.cwd, flashModel: 'gemini-2.5-flash', proModel: 'gemini-2.5-pro' });
 
-  // Load model adapters (Genkit via Flash)
-  const models = await loadModels({ flashModel: args.flashModel, proModel: args.proModel });
+  // Load model adapters (uses fixed Gemini 2.5 Flash and Pro)
+  const models = await loadModels();
 
   const initialInput = args.message || '';
   // Default: interactive UI if TTY and not explicitly headless
@@ -98,6 +100,6 @@ export async function main() {
     console.log(chalk.yellow('Headless mode requires a goal. Example: taskcli --headless "Create a README"'));
     return;
   }
-  const result = await orchestrate({ userGoal, models, session, options: { autoConfirm: args.yes } });
+  await orchestrate({ userGoal, models, session, options: { autoConfirm: args.yes } });
   saveSession(session);
 }

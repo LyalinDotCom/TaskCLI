@@ -136,7 +136,7 @@ async function execAction(action, ctx) {
       case 'write_file': {
         let content = action.content;
         if (!content && action.content_prompt) {
-          if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+          if (ui?.onModelStart) ui.onModelStart('gemini-2.5-pro');
           const code = await withUICancel(ui, (signal) => models.generateProWithContext(
             codeGenPrompt({ instruction: action.content_prompt, context: `Path: ${action.path}` }),
             session,
@@ -154,7 +154,7 @@ async function execAction(action, ctx) {
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
-        if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+        if (ui?.onModelStart) ui.onModelStart('gemini-2.5-pro');
         const code = await withUICancel(ui, (signal) => models.generateProWithContext(
           codeGenPrompt({ instruction: action.prompt, context: `Path: ${action.path}` }),
           session,
@@ -170,7 +170,7 @@ async function execAction(action, ctx) {
       }
       case 'edit_file': {
         const current = await readFs(cwd, action.path);
-        if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+        if (ui?.onModelStart) ui.onModelStart('gemini-2.5-pro');
         const updated = await withUICancel(ui, (signal) => models.generateProWithContext(
           editFilePrompt({ filepath: action.path, currentContent: current.content, instruction: action.instruction, context: '' }),
           session,
@@ -244,7 +244,7 @@ export async function runProAgentCycle({ userGoal, plan, session, models, option
   }
 
   const prompt = buildAgentPrompt({ userGoal, plan, cwd: session.meta.cwd, previousAttempts, lastError });
-  if (ui?.onModelStart) ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+  if (ui?.onModelStart) ui.onModelStart('gemini-2.5-pro');
   let text;
   try {
     text = await withUICancel(ui, (signal) => models.generateProWithContext(prompt, session, 0.2, { signal }));

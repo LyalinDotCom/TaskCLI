@@ -58,7 +58,11 @@ function buildTranscript(session) {
   return lines.join('\n');
 }
 
-export async function loadModels({ flashModel, proModel }) {
+export async function loadModels() {
+  // Fixed models - no parameters needed
+  const flashModel = 'gemini-2.5-flash';
+  const proModel = 'gemini-2.5-pro';
+  
   const gen = await importFlashGenkit();
   const PRO_SYSTEM = loadProSystem(import.meta.url);
 
@@ -91,22 +95,21 @@ export async function loadModels({ flashModel, proModel }) {
 
   async function generateWithPro(prompt, temperature = 0.2, options = {}) {
     const wrapped = `${PRO_SYSTEM}\n\n${prompt}`;
-    const modelId = proModel.startsWith('googleai/') ? proModel : `googleai/${proModel}`;
+    const modelId = `googleai/${proModel}`;
     if (gen.ai && typeof gen.ai.generate === 'function') {
-      const wants = (process.env.PRO_THINKING || 'auto');
-      const supports = /(2\.5|2\.0|thinking|reason)/i.test(proModel);
-      const tryThinking = wants === '1' || (wants === 'auto' && supports);
-      const budget = parseInt(process.env.PRO_THINKING_BUDGET || '8000', 10);
+      // Always use thinking with 8000 token budget for Gemini 2.5 Pro
+      const budget = 8000;
       try {
         const response = await gen.ai.generate({
           model: modelId,
           prompt: wrapped,
-          config: tryThinking ? { temperature, thinkingConfig: { thinkingBudget: budget } } : { temperature },
+          config: { temperature, thinkingConfig: { thinkingBudget: budget } },
           signal: options.signal,
         });
         return response.text;
       } catch (e) {
         const msg = String(e?.message || e);
+        // Fallback if thinking fails for any reason
         if (/thinking is not supported/i.test(msg)) {
           const response = await gen.ai.generate({ model: modelId, prompt: wrapped, config: { temperature }, signal: options.signal });
           return response.text;
@@ -114,6 +117,7 @@ export async function loadModels({ flashModel, proModel }) {
         throw e;
       }
     }
+    // Fallback path (shouldn't be reached with proper Genkit setup)
     const text = await gen.generateText({ prompt: wrapped, provider: 'google', model: proModel, temperature, signal: options.signal });
     return text;
   }
@@ -121,22 +125,21 @@ export async function loadModels({ flashModel, proModel }) {
   async function generateProWithContext(prompt, session, temperature = 0.2, options = {}) {
     const transcript = buildTranscript(session);
     const wrapped = `${PRO_SYSTEM}\n\nContext Transcript (all prior steps):\n${transcript || '(no prior history)'}\n\n${prompt}`;
-    const modelId = proModel.startsWith('googleai/') ? proModel : `googleai/${proModel}`;
+    const modelId = `googleai/${proModel}`;
     if (gen.ai && typeof gen.ai.generate === 'function') {
-      const wants = (process.env.PRO_THINKING || 'auto');
-      const supports = /(2\.5|2\.0|thinking|reason)/i.test(proModel);
-      const tryThinking = wants === '1' || (wants === 'auto' && supports);
-      const budget = parseInt(process.env.PRO_THINKING_BUDGET || '8000', 10);
+      // Always use thinking with 8000 token budget for Gemini 2.5 Pro
+      const budget = 8000;
       try {
         const response = await gen.ai.generate({
           model: modelId,
           prompt: wrapped,
-          config: tryThinking ? { temperature, thinkingConfig: { thinkingBudget: budget } } : { temperature },
+          config: { temperature, thinkingConfig: { thinkingBudget: budget } },
           signal: options.signal,
         });
         return response.text;
       } catch (e) {
         const msg = String(e?.message || e);
+        // Fallback if thinking fails for any reason
         if (/thinking is not supported/i.test(msg)) {
           const response = await gen.ai.generate({ model: modelId, prompt: wrapped, config: { temperature }, signal: options.signal });
           return response.text;
@@ -144,6 +147,7 @@ export async function loadModels({ flashModel, proModel }) {
         throw e;
       }
     }
+    // Fallback path (shouldn't be reached with proper Genkit setup)
     const text = await gen.generateText({ prompt: wrapped, provider: 'google', model: proModel, temperature, signal: options.signal });
     return text;
   }

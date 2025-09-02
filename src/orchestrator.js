@@ -27,7 +27,7 @@ async function planTasks({ userGoal, models, session, ui }) {
   const memorySummary = summarizeMemory(session);
   const prompt = planningPrompt({ goal: userGoal, memorySummary, cwd: session.meta.cwd });
   if (ui?.onLog) ui.onLog('🧠 Planning with Gemini Flash...');
-  if (ui?.onModelStart) ui.onModelStart(session?.meta?.flashModel || 'gemini-2.5-flash');
+  if (ui?.onModelStart) ui.onModelStart('gemini-2.5-flash');
   const text = await withUICancel(ui, (signal) => models.generateWithFlash(prompt, 0.3, { signal }));
   if (ui?.onModelEnd) ui.onModelEnd();
   const parsed = safeParseJSON(text);
@@ -75,7 +75,7 @@ async function execTask(task, ctx) {
       case 'write_file': {
         let content = task.content;
         if (!content && task.content_prompt) {
-          if (ctx.ui?.onModelStart) ctx.ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+          if (ctx.ui?.onModelStart) ctx.ui.onModelStart('gemini-2.5-pro');
           const code = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(
             codeGenPrompt({ instruction: task.content_prompt, context: `Path: ${task.path}` }),
             session,
@@ -94,7 +94,7 @@ async function execTask(task, ctx) {
         return { ok: true };
       }
       case 'generate_file_from_prompt': {
-        if (ctx.ui?.onModelStart) ctx.ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+        if (ctx.ui?.onModelStart) ctx.ui.onModelStart('gemini-2.5-pro');
         const code = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(
           codeGenPrompt({ instruction: task.prompt, context: `Path: ${task.path}` }),
           session,
@@ -111,7 +111,7 @@ async function execTask(task, ctx) {
       }
       case 'edit_file': {
         const current = await readFs(session.meta.cwd, task.path);
-        if (ctx.ui?.onModelStart) ctx.ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+        if (ctx.ui?.onModelStart) ctx.ui.onModelStart('gemini-2.5-pro');
         const updated = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(
           editFilePrompt({ filepath: task.path, currentContent: current.content, instruction: task.instruction, context: '' }),
           session,
@@ -156,7 +156,7 @@ Provide:
 Listing:
 ${res.stdout.slice(-50000)}`;
           try {
-          if (ctx.ui?.onModelStart) ctx.ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+          if (ctx.ui?.onModelStart) ctx.ui.onModelStart('gemini-2.5-pro');
           const summary = await withUICancel(ctx.ui, (signal) => models.generateProWithContext(summaryPrompt, session, 0.2, { signal }));
           if (ctx.ui?.onModelEnd) ctx.ui.onModelEnd();
             if (ctx.ui?.onTaskSuccess) ctx.ui.onTaskSuccess(task, summary);
@@ -199,7 +199,7 @@ ${res.stdout.slice(-50000)}`;
         const timeoutMs = Number(process.env.PRO_CLOSEOUT_TIMEOUT_MS || 15000);
         let finalNote;
         try {
-          if (ctx.ui?.onModelStart) ctx.ui.onModelStart(session?.meta?.proModel || 'gemini-2.5-pro');
+          if (ctx.ui?.onModelStart) ctx.ui.onModelStart('gemini-2.5-pro');
           finalNote = await withUICancel(ctx.ui, (signal) => Promise.race([
             models.generateProWithContext(closeText, session, 0.2, { signal }),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Closeout timed out')), timeoutMs)),

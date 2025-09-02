@@ -6,6 +6,11 @@ This file provides guidance to AI agents (Gemini, Codex, Claude Code, Copilot, C
 
 TaskCLI is an AI-powered task orchestration CLI that uses Google's Gemini models to break down goals into actionable tasks and execute them autonomously. It's part of the larger Flash project monorepo and provides both interactive TUI and headless command-line modes.
 
+**Fixed Model Configuration:**
+- Planning: Gemini 2.5 Flash (hardcoded)
+- Execution: Gemini 2.5 Pro with 8000 token thinking budget (hardcoded)
+- No model overrides are supported - these are the only models used
+
 ## Development Commands
 
 ```bash
@@ -26,6 +31,8 @@ npm run check                  # Full validation (doctor + smoke + pack)
 node bin/taskcli.js --help
 node bin/taskcli.js --doctor
 node bin/taskcli.js --yes "goal"  # Auto-confirm shell commands
+
+# Note: --flash-model and --pro-model options are ignored if provided
 ```
 
 ## Architecture Overview
@@ -47,9 +54,10 @@ node bin/taskcli.js --yes "goal"  # Auto-confirm shell commands
 
 ### Model Integration
 - Uses Flash's Genkit package from `../Flash/packages/genkit/`
-- Flash model for planning (lightweight, fast)
-- Pro model for execution (more capable)
-- Models configurable via environment variables
+- **Fixed models (not configurable):**
+  - Gemini 2.5 Flash for planning (lightweight, fast)
+  - Gemini 2.5 Pro for execution (with 8000 token thinking budget)
+- Model override arguments and environment variables are ignored
 
 ## Environment Setup
 
@@ -58,11 +66,7 @@ Required `.env` file:
 GEMINI_API_KEY=your-key-here  # or GOOGLE_API_KEY
 ```
 
-Optional model overrides:
-```bash
-FLASH_MODEL=gemini-2.5-flash
-PRO_MODEL=gemini-2.5-pro
-```
+**Note:** Model environment variables (FLASH_MODEL, PRO_MODEL, PRO_THINKING, PRO_THINKING_BUDGET) are ignored. Models are hardcoded to Gemini 2.5 Flash and Gemini 2.5 Pro with 8000 thinking budget.
 
 ## Testing Approach
 
