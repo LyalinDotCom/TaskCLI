@@ -6,7 +6,8 @@ import path from 'node:path';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import chalk from 'chalk';
-import { orchestrate } from '../orchestrator.js';
+// import { orchestrate } from '../orchestrator.js'; // Removed in v2
+const orchestrate = null; // Placeholder
 import { saveSession, saveCommandOutput } from '../session.js';
 import { isSlashCommand, processSlashCommand, getCommandSuggestions } from '../slashCommands.js';
 
@@ -76,7 +77,7 @@ function Message({ role, text }) {
   return h(Box, null, h(Text, null, text));
 }
 
-export function App({ session, models, initialInput, options }) {
+export function App({ session, models, initialInput, options, useV2 }) {
   const { exit } = useApp();
   const [input, setInput] = React.useState(initialInput || '');
   const [busy, setBusy] = React.useState(false);
@@ -335,7 +336,9 @@ export function App({ session, models, initialInput, options }) {
     setTaskStatus({});
     setMessages((m) => [...m, { role: 'sep' }, { role: 'user', text: goal }, { role: 'spacer' }]);
     try {
-      const res = await orchestrate({ userGoal: goal, models, session, options, ui });
+      let res;
+      // TUI not yet supported in v2 - use headless mode
+      throw new Error('TUI not yet supported in v2. Please use headless mode: taskcli --headless "your goal"');
       if (!res.ok) {
         setMessages((m) => [...m, { role: 'executor', text: `Error: ${res.error}` }]);
       }
@@ -485,6 +488,6 @@ export function App({ session, models, initialInput, options }) {
   );
 }
 
-export function startTUI({ session, models, options, initialInput }) {
-  return render(h(App, { session, models, options, initialInput }), { exitOnCtrlC: true });
+export function startTUI({ session, models, options, initialInput, useV2 }) {
+  return render(h(App, { session, models, options, initialInput, useV2 }), { exitOnCtrlC: true });
 }

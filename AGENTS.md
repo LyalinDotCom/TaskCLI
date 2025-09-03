@@ -7,8 +7,8 @@ This file provides guidance to AI agents (Gemini, Codex, Claude Code, Copilot, C
 TaskCLI is an AI-powered task orchestration CLI that uses Google's Gemini models to break down goals into actionable tasks and execute them autonomously. It's part of the larger Flash project monorepo and provides both interactive TUI and headless command-line modes.
 
 **Fixed Model Configuration:**
-- Planning: Gemini 2.5 Flash (hardcoded)
-- Execution: Gemini 2.5 Pro with 8000 token thinking budget (hardcoded)
+- Default (v2): Gemini 2.5 Pro only with 8000 token thinking budget (unified planning/execution)
+- Legacy (--v1): Gemini 2.5 Flash (planning) + Gemini 2.5 Pro (execution)
 - No model overrides are supported - these are the only models used
 
 ## Development Commands
@@ -17,7 +17,7 @@ TaskCLI is an AI-powered task orchestration CLI that uses Google's Gemini models
 # Install and setup
 npm install
 
-# Run TaskCLI
+# Run TaskCLI (v2 unified orchestrator by default)
 npm start                      # Interactive mode
 npm run dev                    # Interactive mode (alias)
 node bin/taskcli.js --headless "your goal"  # Headless mode
@@ -31,13 +31,31 @@ npm run check                  # Full validation (doctor + smoke + pack)
 node bin/taskcli.js --help
 node bin/taskcli.js --doctor
 node bin/taskcli.js --yes "goal"  # Auto-confirm shell commands
+node bin/taskcli.js --v1 "goal"   # Use legacy Flash+Pro orchestrator
 
 # Note: --flash-model and --pro-model options are ignored if provided
 ```
 
 ## Architecture Overview
 
-### Core Flow
+### Unified Flow (Default - v2)
+1. **Entry**: `bin/taskcli.js` → `src/index.js` (main initialization)
+2. **Decision**: `src/orchestratorV2.js` uses Gemini Pro to decide approach
+3. **Modes**:
+   - **EXECUTE_DIRECT**: Simple, unconditional, single-step tasks only
+   - **CREATE_PLAN**: Preferred for conditional logic, error handling, multi-step tasks
+   - **ASK_USER**: Clarification needed (rarely used)
+4. **Smart Planning**: Automatically creates plans for conditional requests like "build and fix errors"
+   - Detects conditional phrases ("if errors", "and fix", "if fails")
+   - Creates multi-step plans with error analysis tasks
+   - Supports special "analyze_and_fix" task type for dynamic error resolution
+5. **Adaptive Execution**: Automatic error recovery with FIX_AND_RETRY
+   - Analyzes actual error output (not just error messages)
+   - Extracts file paths from compilation/build errors
+   - Guides Pro to fix specific code issues rather than assuming missing dependencies
+6. **No Flash Dependency**: Uses only Gemini Pro for all decisions and execution
+
+### Legacy Flow (--v1 flag)
 1. **Entry**: `bin/taskcli.js` → `src/index.js` (main initialization)
 2. **Planning**: `src/orchestrator.js` uses Gemini Flash to break down goals
 3. **Execution**: `src/agent.js` uses Gemini Pro to execute individual tasks
@@ -45,7 +63,8 @@ node bin/taskcli.js --yes "goal"  # Auto-confirm shell commands
 5. **UI**: Interactive mode uses React/Ink components in `src/ui/`
 
 ### Key Components
-- **`src/orchestrator.js`**: Main task planning and execution loop
+- **`src/orchestratorV2.js`**: Default unified Pro-only orchestrator with adaptive execution
+- **`src/orchestrator.js`**: Legacy task planning and execution loop (Flash + Pro)
 - **`src/agent.js`**: Pro model agent for task execution
 - **`src/models.js`**: Genkit integration with Flash's AI adapter
 - **`src/adaptive.js`**: Smart command execution with retry logic
@@ -138,3 +157,12 @@ Tools in `src/tools/` follow a consistent pattern:
 - Command summaries include working directory context when different from session cwd
 - Planning prompt updated to emphasize using correct paths from memory summary
 - Session history now provides comprehensive context about project structure
+
+### Build Error Recovery (v2)
+**Issue**: When build commands fail with compilation errors, the system would incorrectly try to install dependencies instead of fixing the actual code issues.
+**Fix**:
+- Enhanced `getRecoveryDecision()` in `src/orchestratorV2.js` to better analyze build output
+- Extracts file paths mentioned in error messages
+- Emphasizes reading the full error output, not just error messages
+- Guides Pro to read and fix specific files rather than assuming dependency issues
+- `run_command` in `src/agent.js` now returns stdout/stderr in error responses for better context
