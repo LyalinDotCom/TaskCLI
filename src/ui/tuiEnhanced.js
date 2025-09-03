@@ -1,0 +1,541 @@
+/**
+ * Enhanced TUI with context management and improved status bar
+ */
+
+import React from 'react';
+import { render, Box, Text, useApp, useInput } from 'ink';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import TextInput from 'ink-text-input';
+import Spinner from 'ink-spinner';
+import chalk from 'chalk';
+import { AutonomousAgent } from '../agent.js';
+import { saveSession } from '../session.js';
+import { getContextManager } from '../contextManager.js';
+import { SlashCommandPalette, useSlashCommands } from './SlashCommandPalette.js';
+
+const h = React.createElement;
+
+function gradientText(text) {
+  const colors = ['#8be9fd', '#bd93f9', '#ff79c6', '#ffb86c'];
+  const chars = [...text];
+  return h(
+    Text,
+    null,
+    ...chars.map((ch, i) => h(Text, { key: i, color: colors[i % colors.length], bold: true }, ch)),
+  );
+}
+
+function headerBanner() {
+  const title = 'TASKCLI v2';
+  const line = ' '.repeat(1) + '>' + ' '.repeat(1) + title + ' ';
+  return h(
+    Box,
+    { flexDirection: 'column' },
+    h(Box, null, gradientText(line)),
+  );
+}
+
+function Message({ role, text }) {
+  if (role === 'sep') {
+    const width = Math.max(40, Math.min(120, (process.stdout.columns || 80)));
+    const line = '─'.repeat(width);
+    return h(Box, null, h(Text, { color: 'gray', dimColor: true }, line));
+  }
+  if (role === 'spacer') {
+    return h(Box, null, h(Text, null, ' '));
+  }
+  if (role === 'tool') {
+    return h(Box, { marginBottom: 0 }, h(Text, { color: 'cyan' }, `→ ${text}`));
+  }
+  if (role === 'success') {
+    return h(Box, null, h(Text, { color: 'green' }, `  ✓ ${text}`));
+  }
+  if (role === 'error') {
+    return h(Box, null, h(Text, { color: 'red' }, `  ✗ ${text}`));
+  }
+  if (role === 'output') {
+    return h(Box, null, h(Text, { color: 'gray' }, text));
+  }
+  if (role === 'agent') {
+    return h(Box, null, h(Text, { color: 'white' }, text));
+  }
+  if (role === 'system') {
+    return h(Box, null, h(Text, { color: 'white', dimColor: true }, text));
+  }
+  if (role === 'user') {
+    return h(Box, null, h(Text, { color: 'white', bold: true }, `> ${text}`));
+  }
+  if (role === 'complete') {
+    return h(Box, null, h(Text, { color: 'green', bold: true }, `✨ ${text}`));
+  }
+  if (role === 'context') {
+    return h(Box, null, h(Text, { color: 'yellow' }, `📁 ${text}`));
+  }
+  return h(Box, null, h(Text, null, text));
+}
+
+function ContextPrompt({ contextSummary, onResume, onNew, onDismiss }) {
+  const [choice, setChoice] = React.useState('');
+  
+  return h(
+    Box,
+    { flexDirection: 'column', borderStyle: 'round', borderColor: 'yellow', paddingX: 1, paddingY: 1 },
+    h(Text, { bold: true, color: 'yellow' }, '📁 Previous Context Found'),
+    h(Text, null, ' '),
+    h(Text, { color: 'white' }, `Last session: ${contextSummary.age}`),
+    h(Text, { color: 'gray' }, `Tasks: ${contextSummary.taskCount} | History: ${contextSummary.historyCount}`),
+    h(Text, { color: 'cyan' }, `Last goal: ${contextSummary.lastGoal.substring(0, 60)}${contextSummary.lastGoal.length > 60 ? '...' : ''}`),
+    h(Text, null, ' '),
+    h(Text, { color: 'white' }, 'Would you like to resume? (r)esume / (n)ew / (c)ancel'),
+    h(Box, { marginTop: 1 },
+      h(Text, null, '> '),
+      h(TextInput, {
+        value: choice,
+        onChange: setChoice,
+        onSubmit: (val) => {
+          const ch = val.toLowerCase().trim();
+          if (ch === 'r' || ch === 'resume') {
+            onResume();
+          } else if (ch === 'n' || ch === 'new') {
+            onNew();
+          } else if (ch === 'c' || ch === 'cancel') {
+            onDismiss();
+          }
+        }
+      })
+    )
+  );
+}
+
+export function App({ session, modelAdapter, initialInput, options }) {
+  const { exit } = useApp();
+  const [input, setInput] = React.useState(initialInput || '');
+  const [busy, setBusy] = React.useState(false);
+  const [messages, setMessages] = React.useState([]);
+  const [queue, setQueue] = React.useState([]);
+  const [cancelRequested, setCancelRequested] = React.useState(false);
+  const [modelBusy, setModelBusy] = React.useState(false);
+  const [modelName, setModelName] = React.useState('');
+  const [history, setHistory] = React.useState([]);
+  const [histIdx, setHistIdx] = React.useState(-1);
+  const [showContextPrompt, setShowContextPrompt] = React.useState(false);
+  const [contextSummary, setContextSummary] = React.useState(null);
+  const [workingDir] = React.useState(session.meta?.cwd || process.cwd());
+  const [contextManager] = React.useState(() => getContextManager(workingDir));
+  
+  const MAX_MESSAGES = 150;
+  const HISTORY_MAX = 20;
+  const killRef = React.useRef(null);
+  
+  // Slash command palette state
+  const slashCommands = useSlashCommands(input, setInput);
+
+  // Check for existing context on mount
+  React.useEffect(() => {
+    if (!initialInput && contextManager.hasContext()) {
+      const summary = contextManager.getContextSummary();
+      if (summary) {
+        setContextSummary(summary);
+        setShowContextPrompt(true);
+      }
+    }
+  }, []);
+
+  // Load command history on mount
+  React.useEffect(() => {
+    try {
+      const histPath = path.join(os.homedir(), '.taskcli', 'history.txt');
+      if (fs.existsSync(histPath)) {
+        const lines = fs.readFileSync(histPath, 'utf8').split(/\r?\n/).filter(Boolean);
+        setHistory(lines.slice(0, HISTORY_MAX));
+      }
+    } catch {}
+  }, []);
+
+  function pushHistory(cmd) {
+    setHistory((h) => {
+      const updated = [cmd, ...h.filter((c) => c !== cmd)].slice(0, HISTORY_MAX);
+      try {
+        const dir = path.join(os.homedir(), '.taskcli');
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'history.txt'), updated.join('\n'), 'utf8');
+      } catch {}
+      return updated;
+    });
+  }
+
+  useInput((inp, key) => {
+    // Handle slash command navigation first
+    if (slashCommands.showPalette) {
+      if (slashCommands.handleKeyNavigation(key)) {
+        return;
+      }
+    }
+    
+    if (!busy) {
+      if (key.upArrow && !slashCommands.showPalette) {
+        setHistIdx((idx) => {
+          const next = Math.min(idx + 1, history.length - 1);
+          if (next >= 0 && history[next]) setInput(history[next]);
+          return next;
+        });
+      } else if (key.downArrow && !slashCommands.showPalette) {
+        setHistIdx((idx) => {
+          const next = idx - 1;
+          if (next < 0) {
+            setInput('');
+            return -1;
+          } else if (history[next]) {
+            setInput(history[next]);
+            return next;
+          }
+          return idx;
+        });
+      }
+    }
+    // Double-ESC to cancel
+    if (key.escape) {
+      if (cancelRequested) {
+        if (killRef.current) killRef.current();
+        setCancelRequested(false);
+      } else {
+        setCancelRequested(true);
+        setTimeout(() => setCancelRequested(false), 1000);
+      }
+    }
+  });
+
+  const appendMessage = React.useCallback((msg) => {
+    setMessages((msgs) => {
+      const updated = [...msgs, msg];
+      return updated.length > MAX_MESSAGES ? updated.slice(-MAX_MESSAGES) : updated;
+    });
+  }, []);
+
+  const ui = React.useMemo(() => ({
+    appendMessage,
+    onModelBusy: (name, busy) => {
+      setModelBusy(busy);
+      setModelName(name || '');
+    },
+    cancelRequested: () => cancelRequested,
+    onRegisterKill: (fn) => {
+      killRef.current = fn;
+    }
+  }), [cancelRequested, appendMessage]);
+
+  async function runAgent(goal) {
+    setBusy(true);
+    setCancelRequested(false);
+    setMessages((m) => [...m, { role: 'sep' }, { role: 'user', text: goal }, { role: 'spacer' }]);
+    
+    // Save context after each interaction
+    const saveContext = () => {
+      if (contextManager) {
+        contextManager.saveContext(session);
+      }
+    };
+    
+    try {
+      const agent = new AutonomousAgent(modelAdapter, {
+        cwd: workingDir,
+        session,
+        autoConfirm: options.autoConfirm
+      });
+
+      const result = await agent.execute(goal, ui);
+      
+      if (result.success) {
+        appendMessage({ role: 'sep' });
+        appendMessage({ role: 'complete', text: result.message || 'Task completed successfully!' });
+      } else if (result.needsHelp) {
+        appendMessage({ role: 'sep' });
+        appendMessage({ role: 'system', text: `Need help: ${result.message}` });
+      } else {
+        appendMessage({ role: 'sep' });
+        appendMessage({ role: 'error', text: `Failed: ${result.error || 'Unknown error'}` });
+      }
+      
+      saveSession(session);
+      saveContext();
+    } catch (error) {
+      appendMessage({ role: 'error', text: `Error: ${error.message}` });
+    } finally {
+      setBusy(false);
+      setModelBusy(false);
+      setModelName('');
+      
+      // Process queued inputs
+      setQueue((q) => {
+        const copy = [...q];
+        const next = copy.shift();
+        if (next) {
+          setTimeout(() => runAgent(next), 0);
+        }
+        return copy;
+      });
+    }
+  }
+
+  // Handle context prompt choices
+  const handleResume = React.useCallback(() => {
+    const data = contextManager.loadContext();
+    if (data) {
+      // Merge the loaded session with current session
+      session.history = [...(data.session.history || [])];
+      session.tasks = [...(data.session.tasks || [])];
+      setMessages([
+        { role: 'context', text: 'Context resumed from previous session' },
+        { role: 'system', text: `Loaded ${session.history.length} history items and ${session.tasks.length} tasks` },
+        { role: 'spacer' }
+      ]);
+    }
+    setShowContextPrompt(false);
+  }, [session, contextManager]);
+
+  const handleNew = React.useCallback(() => {
+    // Archive old context before starting fresh
+    contextManager.archiveContext();
+    setMessages([
+      { role: 'context', text: 'Starting fresh session (previous context archived)' },
+      { role: 'spacer' }
+    ]);
+    setShowContextPrompt(false);
+  }, [contextManager]);
+
+  const handleDismiss = React.useCallback(() => {
+    setMessages([
+      { role: 'system', text: 'Continuing without loading context' },
+      { role: 'spacer' }
+    ]);
+    setShowContextPrompt(false);
+  }, []);
+
+  // Handle slash commands
+  const handleSlashCommand = React.useCallback((cmd) => {
+    const command = cmd.toLowerCase().trim();
+    
+    if (command === '/help') {
+      appendMessage({ role: 'system', text: 'Available commands:' });
+      appendMessage({ role: 'system', text: '/resume - Resume from saved context' });
+      appendMessage({ role: 'system', text: '/save - Save current context' });
+      appendMessage({ role: 'system', text: '/status - Show context status' });
+      appendMessage({ role: 'system', text: '/clear - Clear all context and start fresh' });
+      appendMessage({ role: 'system', text: '/init - Inspect project (read-only)' });
+      appendMessage({ role: 'system', text: '/model - Show model configuration' });
+      appendMessage({ role: 'system', text: '/thinking <n> - Set thinking budget' });
+      appendMessage({ role: 'system', text: '/clear - Clear message history' });
+      appendMessage({ role: 'system', text: '/exit - Exit TaskCLI' });
+      return true;
+    }
+    
+    if (command === '/resume') {
+      if (contextManager.hasContext()) {
+        handleResume();
+        appendMessage({ role: 'context', text: 'Context resumed' });
+      } else {
+        appendMessage({ role: 'system', text: 'No context found to resume' });
+      }
+      return true;
+    }
+    
+    
+    if (command === '/save') {
+      contextManager.saveContext(session);
+      appendMessage({ role: 'context', text: 'Context saved to .taskcli folder' });
+      return true;
+    }
+    
+    if (command === '/status') {
+      const summary = contextManager.getContextSummary();
+      if (summary) {
+        appendMessage({ role: 'context', text: `Context: ${summary.age} old, ${summary.taskCount} tasks, ${summary.historyCount} history items` });
+      } else {
+        appendMessage({ role: 'system', text: 'No context saved yet' });
+      }
+      return true;
+    }
+    
+    if (command === '/clear') {
+      // Clear both UI and saved context
+      setMessages([]);
+      session.history = [];
+      session.tasks = [];
+      contextManager.clearContext();
+      appendMessage({ role: 'system', text: 'All context cleared - starting fresh' });
+      appendMessage({ role: 'spacer' });
+      return true;
+    }
+    
+    if (command === '/init') {
+      appendMessage({ role: 'context', text: 'Initializing project understanding...' });
+      // Create a special read-only inspection goal
+      const initGoal = `IMPORTANT: This is a READ-ONLY inspection. DO NOT modify any files.
+
+Please inspect and understand this project:
+1. List the main directories and files
+2. Read key configuration files (package.json, README, etc.)
+3. Identify the project type and main technologies used
+4. Understand the project structure and architecture
+5. Summarize what this project does
+
+Remember: Only READ files, do not write or modify anything.`;
+      
+      // Queue this as a task
+      if (busy) {
+        setQueue((q) => [...q, initGoal]);
+      } else {
+        runAgent(initGoal);
+      }
+      return true;
+    }
+    
+    if (command === '/model') {
+      appendMessage({ role: 'system', text: `Model: Gemini 2.5 Pro` });
+      appendMessage({ role: 'system', text: `Thinking budget: ${modelAdapter.thinkingBudget === -1 ? 'Dynamic' : modelAdapter.thinkingBudget}` });
+      return true;
+    }
+    
+    if (command.startsWith('/thinking')) {
+      const parts = command.split(' ');
+      if (parts.length > 1) {
+        const budget = parseInt(parts[1]);
+        if (!isNaN(budget)) {
+          modelAdapter.thinkingBudget = budget;
+          appendMessage({ role: 'system', text: `Thinking budget set to: ${budget === -1 ? 'Dynamic' : budget}` });
+          return true;
+        }
+      }
+      appendMessage({ role: 'error', text: 'Usage: /thinking <number> (use -1 for dynamic)' });
+      return true;
+    }
+    
+    if (command === '/exit') {
+      exit();
+      return true;
+    }
+    
+    return false;
+  }, [contextManager, session, handleResume, appendMessage]);
+
+  // Run initial input if provided
+  React.useEffect(() => {
+    if (!showContextPrompt && initialInput && initialInput.trim()) {
+      runAgent(initialInput.trim());
+    }
+  }, [showContextPrompt]);
+
+  // Show context prompt if needed
+  if (showContextPrompt && contextSummary) {
+    return h(
+      Box,
+      { flexDirection: 'column', paddingX: 1, paddingY: 1 },
+      headerBanner(),
+      h(Box, { marginTop: 1 },
+        h(ContextPrompt, {
+          contextSummary,
+          onResume: handleResume,
+          onNew: handleNew,
+          onDismiss: handleDismiss
+        })
+      )
+    );
+  }
+
+  return h(
+    Box,
+    { flexDirection: 'column', paddingX: 1, paddingY: 1 },
+    // Header
+    h(
+      Box,
+      { flexDirection: 'column' },
+      headerBanner(),
+      h(Box, null, h(Text, { color: 'gray' }, `Session ${session.id}`)),
+    ),
+    // Messages area
+    h(
+      Box,
+      { marginTop: 1, flexDirection: 'column', flexGrow: 1 },
+      ...messages.map((m, idx) => h(Message, { key: String(idx), role: m.role, text: m.text })),
+    ),
+    // Slash command palette
+    slashCommands.showPalette && !busy
+      ? h(SlashCommandPalette, {
+          input,
+          onSelect: (cmd) => {
+            setInput(cmd);
+            slashCommands.setShowPalette(false);
+          }
+        })
+      : null,
+    // Queue indicator
+    queue.length > 0
+      ? h(
+          Box,
+          { marginTop: 0 },
+          h(Text, { color: 'yellow' }, `Queued: ${queue.length} task(s)`),
+        )
+      : null,
+    // Input area
+    h(
+      Box,
+      { marginTop: 1 },
+      h(Text, null, busy ? h(Spinner) : '>'),
+      h(Text, null, ' '),
+      h(TextInput, {
+        value: input,
+        onChange: setInput,
+        placeholder: busy ? 'Working...' : 'Describe your goal or type / for commands...',
+        onSubmit: (val) => {
+          const trimmed = val.trim();
+          if (!trimmed) return;
+          
+          // Check for slash commands
+          if (trimmed.startsWith('/')) {
+            if (handleSlashCommand(trimmed)) {
+              setInput('');
+              return;
+            }
+          }
+          
+          setInput('');
+          pushHistory(trimmed);
+          setHistIdx(-1);
+          
+          if (busy) {
+            setQueue((q) => [...q, trimmed]);
+          } else {
+            runAgent(trimmed);
+          }
+        },
+      }),
+    ),
+    // Enhanced status bar with working directory
+    h(
+      Box,
+      { marginTop: 1, flexDirection: 'column' },
+      h(Box, { justifyContent: 'space-between' },
+        h(Text, { color: 'cyan' }, busy ? 'Working...' : 'Ready'),
+        modelBusy
+          ? h(Text, { color: 'gray' }, h(Spinner), ` ${modelName}`)
+          : h(Text, { color: 'gray' }, 'Ctrl-C: exit | ↑↓: history | /: commands')
+      ),
+      h(Box, null,
+        h(Text, { color: 'blue', bold: true }, '📁 '),
+        h(Text, { color: 'white', dimColor: true }, workingDir),
+        contextManager.hasContext() 
+          ? h(Text, { color: 'green' }, ' [✓ context]')
+          : null
+      )
+    ),
+  );
+}
+
+export function startTUI({ session, modelAdapter, options, initialInput }) {
+  return render(
+    h(App, { session, modelAdapter, options, initialInput }),
+    { exitOnCtrlC: true }
+  );
+}

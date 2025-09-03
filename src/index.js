@@ -11,9 +11,10 @@ import dotenv from 'dotenv';
 import { AutonomousAgent } from './agent.js';
 import { createModelAdapter } from './models.js';
 import { ensureSessionDir, newSession, saveSession } from './session.js';
+import { getContextManager } from './contextManager.js';
 import { printHeader } from './ui.js';
 import { runDoctor } from './doctor.js';
-import { startTUI } from './ui/tui.js';
+import { startTUI } from './ui/tuiEnhanced.js';
 
 function loadEnv() {
   const cwd = process.cwd();
@@ -132,6 +133,7 @@ export async function main() {
   
   // Interactive mode (default if TTY and not headless)
   if (!args.headless && process.stdin.isTTY) {
+    // Use enhanced TUI with context management
     startTUI({
       session,
       modelAdapter,
@@ -188,8 +190,10 @@ export async function main() {
       console.log(chalk.red('❌ Failed:'), result.error || 'Unknown error');
     }
     
-    // Save session
+    // Save session and local context
     saveSession(session);
+    const contextManager = getContextManager(args.cwd);
+    contextManager.saveContext(session);
   } catch (error) {
     console.error(chalk.red('Fatal error:'), error);
     process.exit(1);

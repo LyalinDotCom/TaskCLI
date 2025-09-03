@@ -1,5 +1,19 @@
 TaskCLI — AI Task Orchestrator CLI
 
+⚠️ **IMPORTANT SAFETY WARNING** ⚠️
+This tool is EXPERIMENTAL and executes commands autonomously with AI. It can:
+- Modify, create, and delete files in your filesystem
+- Execute shell commands with real effects
+- Make irreversible changes to your project
+
+**USE AT YOUR OWN RISK**. Always:
+- Work in a backed-up or version-controlled environment
+- Review actions before confirming (use without -y flag)
+- Test in a safe directory first
+- Never run with sudo or elevated privileges
+
+This is a "YOLO" tool - it takes actions first and asks questions later. You have been warned! 🚨
+
 Overview
 - Intelligently breaks down complex goals into actionable tasks
 - Executes each task autonomously using Gemini Pro and local tools
@@ -40,6 +54,24 @@ Non-Interactive Smoke Test (no network)
 # Runs a canned plan that verifies shell, file write/read, codegen and execution
 npm run smoke
 ```
+
+Context Persistence
+- TaskCLI creates a `.taskcli` folder in your working directory to save session context
+- On startup, it detects previous sessions and offers to resume
+- Context is automatically saved after each interaction
+- Use slash commands in interactive mode:
+  - `/resume` - Resume from saved context
+  - `/save` - Manually save current context
+  - `/status` - Show context status
+  - `/clear` - Clear all context and start fresh
+  - `/init` - Inspect project structure (read-only)
+  - `/help` - Show all available commands
+
+Interactive Features
+- Smart slash command palette with filtering and tooltips
+- Status bar showing current working directory
+- Command history with arrow key navigation
+- Context-aware session management
 
 Notes
 - Task planning and execution uses Google's GenAI SDK directly with Gemini Pro
