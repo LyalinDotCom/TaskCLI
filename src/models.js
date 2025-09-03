@@ -52,7 +52,7 @@ export class ModelAdapter {
 
       const config = {
         temperature,
-        maxOutputTokens: 4096,  // Increased for complex responses
+        maxOutputTokens: 65536,  // Maximum for Gemini 2.5 Pro
         responseMimeType: 'application/json'  // Force JSON output
       };
       
@@ -202,7 +202,7 @@ export class ModelAdapter {
 
       const config = {
         temperature,
-        maxOutputTokens: 8192
+        maxOutputTokens: 65536  // Maximum for Gemini 2.5 Pro
       };
       
       // Add thinking configuration for text generation too

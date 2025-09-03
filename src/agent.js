@@ -252,12 +252,15 @@ export class AutonomousAgent {
    * Get next action from the model
    */
   async _getNextAction(conversationHistory, ui) {
+    // Define these outside try block for error handling
+    let prompt, history;
+    
     try {
       if (ui?.onModelStart) ui.onModelStart('gemini-2.5-pro');
       
       // Use the new model adapter with structured output
-      const prompt = conversationHistory[conversationHistory.length - 1].content;
-      const history = conversationHistory.slice(0, -1);
+      prompt = conversationHistory[conversationHistory.length - 1].content;
+      history = conversationHistory.slice(0, -1);
       
       const response = await this.model.generateAction(prompt, history, 0.1);
       
