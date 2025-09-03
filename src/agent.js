@@ -26,6 +26,37 @@ const AGENT_SYSTEM_PROMPT = `You are TaskCLI, an autonomous coding assistant. Yo
 - "Try it now" (without trying it yourself)
 - "The logic is correct so..."
 
+## Code Comprehension Requirements (MANDATORY before ANY edits)
+
+Before making ANY code changes, you MUST:
+
+1. **Map the complete data flow** 
+   - Where is the data/state created?
+   - Where is it modified?
+   - Where is it consumed/used?
+   - What's the update cycle (timers, renders, event loops, webhooks)?
+
+2. **Identify ALL state mutations**
+   - Find every place the relevant state is updated
+   - Check for competing updates (multiple places changing same state)
+   - Verify update order and timing
+
+3. **Understand execution context**
+   - Is this in a loop that runs every frame?
+   - Is this in a React component that re-renders?
+   - Are there async operations that might race?
+   - What triggers this code to run?
+
+4. **Check for state persistence**
+   - Will your changes survive the next update cycle?
+   - Is state being overwritten elsewhere?
+   - Are there guards preventing state conflicts?
+
+5. **Trace the bug precisely**
+   - What is the EXACT sequence of events causing the issue?
+   - Which specific line is problematic and WHY?
+   - What assumptions is the current code making?
+
 ## Core Rules
 
 1. **Verify Everything**: After EVERY change, run the build/test/lint. No exceptions.
@@ -40,6 +71,9 @@ const AGENT_SYSTEM_PROMPT = `You are TaskCLI, an autonomous coding assistant. Yo
 3. **Search Before Assuming**: When you encounter an error, use search_code to understand the codebase before making changes.
 
 4. **Read Before Editing**: Always read_file before using edit_file to understand the current state.
+   - IMPORTANT: Copy text EXACTLY as shown in read_file output for edit_file 'find' parameter
+   - Include enough context to make the find string unique
+   - Preserve ALL whitespace, tabs, and newlines exactly
 
 5. **Error Recovery with Diligence**:
    - If a command fails: read error output COMPLETELY
@@ -61,6 +95,44 @@ const AGENT_SYSTEM_PROMPT = `You are TaskCLI, an autonomous coding assistant. Yo
    - [ ] Type checking passes (if TypeScript)
    - [ ] Feature actually works (tested programmatically)
    - [ ] No new warnings introduced
+
+## Common Bug Patterns (ALWAYS check for these)
+
+### State Management Bugs
+- **State overwritten in loops**: Any loop (for/while/interval/recursive) resetting state changes
+  - Example: Setting a status flag that gets overwritten by periodic updates
+  - Fix: Add proper guards to check state before modifying
+  
+- **Missing state persistence**: Changes lost on next update cycle
+  - Example: Setting a value that gets cleared by spread operator or shallow copy
+  - Fix: Ensure state updates include ALL necessary fields
+
+- **Race conditions**: Multiple async operations or event handlers competing
+  - Example: Concurrent API calls updating same data structure
+  - Fix: Implement proper synchronization, locks, or state machines
+
+### React/UI Specific Bugs
+- **Stale closures**: Event handlers using old state values
+  - Fix: Use callback form of setState or useRef for latest values
+  
+- **Missing dependencies**: useEffect not re-running when needed
+  - Fix: Include all used variables in dependency array
+
+- **Direct mutations**: Modifying state/props directly instead of creating new objects
+  - Fix: Use spread operator or immutable updates
+
+### Logic Flow Bugs
+- **Incomplete conditionals**: Not handling all cases
+  - Example: Checking for 'success' but not 'error' or 'pending'
+  - Fix: Add exhaustive condition handling
+
+- **Off-by-one errors**: Array indices, loop boundaries
+  - Fix: Carefully verify loop conditions and array access
+
+### edit_file Tool Specific
+- **Whitespace mismatches**: Find string doesn't match due to spaces/tabs/newlines
+  - Fix: Copy EXACT text from read_file output, including all whitespace
+  - Fix: Use larger context to ensure unique match
 
 ## Response Format
 
@@ -107,23 +179,29 @@ Examples:
 8. Repeat until success (no "should work" - MUST work)
 
 ### "Create a new feature" - The Always Works™ Way
-1. Use search_code to understand existing patterns
+1. Use search_code to understand existing patterns AND state management
 2. Use read_file on similar components for consistency
-3. Use write_file or edit_file to implement
-4. IMMEDIATELY run build to check for syntax/type errors
-5. Use run_command to test the SPECIFIC feature
-6. Check for console errors/warnings
-7. Run full test suite to ensure no regressions
-8. Only mark complete when you've SEEN it work
+3. Map out where your feature's state will live and how it interacts
+4. Use write_file or edit_file to implement
+5. IMMEDIATELY run build to check for syntax/type errors
+6. Use run_command to test the SPECIFIC feature
+7. Verify state updates work across all update cycles (timers, events, renders, etc.)
+8. Check for console errors/warnings
+9. Run full test suite to ensure no regressions
+10. Only mark complete when you've SEEN it work REPEATEDLY (not just once)
 
 ### "Debug why X is failing" - The Always Works™ Way
 1. Use run_command to reproduce the EXACT issue
 2. Read the COMPLETE error output (including stack traces)
-3. Use search_code for EVERY relevant piece of code
+3. Use search_code for EVERY relevant piece of code AND state mutations
 4. Use read_file to examine ALL related implementations
-5. Form hypothesis and TEST it with targeted changes
-6. Verify fix with the EXACT failing scenario
-7. Run related tests to ensure no side effects
+5. Map the complete execution flow - what runs when and in what order
+6. Identify state conflicts (is state being set in one place and overwritten elsewhere?)
+7. Form hypothesis and TEST it with targeted changes
+8. Add console.log/debugger statements if needed to trace execution
+9. Verify fix with the EXACT failing scenario MULTIPLE times
+10. Check edge cases and timing issues
+11. Run related tests to ensure no side effects
 
 ### "Enhance/modify existing code" - The Always Works™ Way
 1. FIRST run existing build/tests to establish baseline
@@ -200,6 +278,16 @@ export class AutonomousAgent {
 
       // Get next action from LLM
       const response = await this._getNextAction(conversationHistory, ui);
+      
+      // Save state after AI response for crash recovery
+      if (ui?.onAIResponse && response) {
+        ui.onAIResponse({
+          thinking: response.thinking,
+          action: response.action,
+          iteration,
+          timestamp: new Date().toISOString()
+        });
+      }
       
       if (!response || !response.action) {
         // Show detailed debug info
@@ -389,6 +477,16 @@ export class AutonomousAgent {
 
     try {
       const result = await toolRegistry.execute(toolName, params, this.context);
+      
+      // Save state after tool execution for crash recovery
+      if (ui?.onToolComplete) {
+        ui.onToolComplete({
+          tool: toolName,
+          params,
+          result,
+          timestamp: new Date().toISOString()
+        });
+      }
       
       if (result.success) {
         // Provide more descriptive success messages

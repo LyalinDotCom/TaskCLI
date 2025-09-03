@@ -81,9 +81,11 @@ function ContextPrompt({ contextSummary, onResume, onNew, onDismiss }) {
   
   return h(
     Box,
-    { flexDirection: 'column', borderStyle: 'round', borderColor: 'yellow', paddingX: 1, paddingY: 1 },
-    h(Text, { bold: true, color: 'yellow' }, '📁 Previous Context Found'),
+    { flexDirection: 'column', borderStyle: 'round', borderColor: contextSummary.wasUncleanExit ? 'red' : 'yellow', paddingX: 1, paddingY: 1 },
+    h(Text, { bold: true, color: contextSummary.wasUncleanExit ? 'red' : 'yellow' }, 
+      contextSummary.wasUncleanExit ? '⚠️  Crash Recovery - Previous Context Found' : '📁 Previous Context Found'),
     h(Text, null, ' '),
+    contextSummary.wasUncleanExit && h(Text, { color: 'red' }, 'TaskCLI appears to have crashed or exited unexpectedly.'),
     h(Text, { color: 'white' }, `Last session: ${contextSummary.age}`),
     h(Text, { color: 'gray' }, `Tasks: ${contextSummary.taskCount} | History: ${contextSummary.historyCount}`),
     h(Text, { color: 'cyan' }, `Last goal: ${contextSummary.lastGoal.substring(0, 60)}${contextSummary.lastGoal.length > 60 ? '...' : ''}`),
@@ -141,7 +143,25 @@ export function App({ session, modelAdapter, initialInput, options }) {
         setShowContextPrompt(true);
       }
     }
-  }, []);
+    
+    // Setup clean exit handler
+    const handleExit = () => {
+      if (contextManager) {
+        contextManager.markCleanExit();
+      }
+    };
+    
+    // Handle various exit signals
+    process.on('exit', handleExit);
+    process.on('SIGINT', handleExit);
+    process.on('SIGTERM', handleExit);
+    
+    return () => {
+      process.removeListener('exit', handleExit);
+      process.removeListener('SIGINT', handleExit);
+      process.removeListener('SIGTERM', handleExit);
+    };
+  }, [contextManager]);
 
   // Load command history on mount
   React.useEffect(() => {
@@ -214,6 +234,17 @@ export function App({ session, modelAdapter, initialInput, options }) {
     });
   }, []);
 
+  // Debounced save function to avoid too frequent saves
+  const saveContextDebounced = React.useCallback(() => {
+    if (contextManager && session) {
+      try {
+        contextManager.saveContext(session);
+      } catch (error) {
+        console.error('Failed to save context:', error);
+      }
+    }
+  }, [contextManager, session]);
+
   const ui = React.useMemo(() => ({
     appendMessage,
     onLog: (message) => {
@@ -233,7 +264,7 @@ export function App({ session, modelAdapter, initialInput, options }) {
     onModelStart: (name) => {
       setModelBusy(true);
       setModelName(name || 'Gemini Pro');
-      appendMessage({ role: 'system', text: `🤔 Thinking...` });
+      // Don't append thinking message - status bar shows this already
     },
     onModelEnd: () => {
       setModelBusy(false);
@@ -243,16 +274,47 @@ export function App({ session, modelAdapter, initialInput, options }) {
       setModelBusy(busy);
       setModelName(name || '');
     },
+    onToolComplete: (toolInfo) => {
+      // Add tool execution to session history
+      session.history.push({
+        time: toolInfo.timestamp,
+        type: 'tool_execution',
+        tool: toolInfo.tool,
+        params: toolInfo.params,
+        success: toolInfo.result?.success
+      });
+      // Save context after each tool completes
+      saveContextDebounced();
+    },
+    onAIResponse: (responseInfo) => {
+      // Add AI response to session history
+      session.history.push({
+        time: responseInfo.timestamp,
+        type: 'ai_response',
+        thinking: responseInfo.thinking,
+        action: responseInfo.action,
+        iteration: responseInfo.iteration
+      });
+      // Save context after each AI decision
+      saveContextDebounced();
+    },
     cancelRequested: () => cancelRequested,
     onRegisterKill: (fn) => {
       killRef.current = fn;
     }
-  }), [cancelRequested, appendMessage]);
+  }), [cancelRequested, appendMessage, session, saveContextDebounced]);
 
   async function runAgent(goal) {
     setBusy(true);
     setCancelRequested(false);
     setMessages((m) => [...m, { role: 'sep' }, { role: 'user', text: goal }, { role: 'spacer' }]);
+    
+    // Add goal to session history
+    session.history.push({
+      time: new Date().toISOString(),
+      type: 'user_goal',
+      message: goal
+    });
     
     // Save context after each interaction
     const saveContext = () => {
@@ -260,6 +322,9 @@ export function App({ session, modelAdapter, initialInput, options }) {
         contextManager.saveContext(session);
       }
     };
+    
+    // Save immediately after adding the goal
+    saveContext();
     
     try {
       const agent = new AutonomousAgent(modelAdapter, {
@@ -270,15 +335,15 @@ export function App({ session, modelAdapter, initialInput, options }) {
 
       const result = await agent.execute(goal, ui);
       
-      if (result.success) {
-        appendMessage({ role: 'sep' });
-        appendMessage({ role: 'complete', text: result.message || 'Task completed successfully!' });
-      } else if (result.needsHelp) {
-        appendMessage({ role: 'sep' });
-        appendMessage({ role: 'system', text: `Need help: ${result.message}` });
-      } else {
-        appendMessage({ role: 'sep' });
-        appendMessage({ role: 'error', text: `Failed: ${result.error || 'Unknown error'}` });
+      // Don't show duplicate messages - the agent already logs completion via ui.onLog
+      if (!result.success) {
+        if (result.needsHelp) {
+          appendMessage({ role: 'sep' });
+          appendMessage({ role: 'system', text: `Need help: ${result.message}` });
+        } else {
+          appendMessage({ role: 'sep' });
+          appendMessage({ role: 'error', text: `Failed: ${result.error || 'Unknown error'}` });
+        }
       }
       
       saveSession(session);

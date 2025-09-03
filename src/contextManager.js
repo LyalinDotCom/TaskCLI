@@ -44,6 +44,8 @@ export class ContextManager {
       sessionId: session.id,
       meta: session.meta,
       resumable: true,
+      cleanExit: false,  // Mark as unclean, will be set to true on proper exit
+      lastActivity: new Date().toISOString(),
       ...options
     };
 
@@ -52,6 +54,21 @@ export class ContextManager {
     
     // Save full session data
     fs.writeFileSync(this.sessionFile, JSON.stringify(session, null, 2), 'utf8');
+  }
+  
+  /**
+   * Mark context as cleanly exited
+   */
+  markCleanExit() {
+    if (this.hasContext()) {
+      try {
+        const context = JSON.parse(fs.readFileSync(this.contextFile, 'utf8'));
+        context.cleanExit = true;
+        fs.writeFileSync(this.contextFile, JSON.stringify(context, null, 2), 'utf8');
+      } catch (error) {
+        console.error('Failed to mark clean exit:', error);
+      }
+    }
   }
 
   /**
@@ -106,6 +123,9 @@ export class ContextManager {
         break;
       }
     }
+    
+    // Check if this was a crash recovery
+    const wasUncleanExit = context.cleanExit === false;
 
     return {
       workingDir: context.workingDir,
@@ -114,7 +134,8 @@ export class ContextManager {
       taskCount,
       historyCount,
       lastGoal,
-      lastUpdate: context.updatedAt
+      lastUpdate: context.updatedAt,
+      wasUncleanExit
     };
   }
 

@@ -4,7 +4,18 @@ This file provides guidance to AI agents (Gemini, Codex, Claude Code, Copilot, C
 
 ## Project Overview
 
-TaskCLI is an AI-powered task orchestration CLI that uses Google's Gemini models to break down goals into actionable tasks and execute them autonomously. It provides both interactive TUI and headless command-line modes.
+TaskCLI is a **general-purpose coding agent** that can work with ANY programming language, framework, or technology stack. It uses Google's Gemini models to autonomously execute coding tasks - from fixing bugs to building features to refactoring code.
+
+**IMPORTANT**: This is NOT specialized for any particular domain (games, web apps, etc.). It's designed to be a universal coding assistant that can handle:
+- Web development (React, Vue, Angular, Next.js, etc.)
+- Backend services (Node.js, Python, Go, Rust, etc.)
+- Mobile apps (React Native, Flutter, Swift, Kotlin, etc.)
+- Systems programming (C, C++, Rust, etc.)
+- Data science (Python, R, Julia, etc.)
+- DevOps and infrastructure (Docker, Kubernetes, Terraform, etc.)
+- Any other programming task
+
+The agent provides both interactive TUI and headless command-line modes.
 
 **Fixed Model Configuration:**
 - Default (v2): Gemini 2.5 Pro only with 8000 token thinking budget (unified planning/execution)
@@ -69,7 +80,7 @@ node bin/taskcli.js --v1 "goal"   # Use legacy dual-model orchestrator
 - **`src/models.js`**: Google GenAI SDK integration for model access
 - **`src/adaptive.js`**: Smart command execution with retry logic
 - **`src/session.js`**: Session persistence and memory management
-- **`prompts/pro-system.md`**: Comprehensive system prompt for task execution
+- **`src/agent.js`**: Contains the AGENT_SYSTEM_PROMPT constant that defines AI behavior
 
 ### Model Integration
 - Uses Google's GenAI SDK directly

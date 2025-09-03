@@ -1,4 +1,4 @@
-TaskCLI — AI Task Orchestrator CLI
+TaskCLI — General-Purpose AI Coding Agent
 
 ⚠️ **IMPORTANT SAFETY WARNING** ⚠️
 This tool is EXPERIMENTAL and executes commands autonomously with AI. It can:
@@ -15,10 +15,13 @@ This tool is EXPERIMENTAL and executes commands autonomously with AI. It can:
 This is a "YOLO" tool - it takes actions first and asks questions later. You have been warned! 🚨
 
 Overview
-- Intelligently breaks down complex goals into actionable tasks
-- Executes each task autonomously using Gemini Pro and local tools
-- Writes/reads files, runs commands, and searches the web
-- Keeps a session log under `TaskCLI/.taskcli/sessions/`
+
+TaskCLI is a general-purpose AI coding agent that can work with ANY programming language or framework:
+- **Universal**: Works with Python, JavaScript, TypeScript, Go, Rust, Java, C++, and more
+- **Framework Agnostic**: React, Vue, Django, Rails, Spring, Express - it handles them all
+- **Full-Stack**: From frontend UI to backend APIs to DevOps scripts
+- **Autonomous**: Breaks down complex goals and executes them step-by-step
+- **Self-Correcting**: Runs tests, catches errors, and fixes them automatically
 
 Setup
 1) In `TaskCLI/`, copy `.env.example` to `.env` and set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)
@@ -75,7 +78,7 @@ Interactive Features
 
 Notes
 - Task planning and execution uses Google's GenAI SDK directly with Gemini Pro
-- Code generation always receives a persistent system prompt loaded from `TaskCLI/prompts/pro-system.md`. You can edit this file to tune behavior.
+- The system prompt is defined in `src/agent.js` as `AGENT_SYSTEM_PROMPT`. You can edit this constant to customize AI behavior.
 - Pro calls include full session context (prior goals, commands, outputs) to maintain continuity across tasks.
 - Web search uses `googlethis` to supplement context
 - Interactive UI is built with Ink (React for CLIs). If your terminal doesn't support raw mode, the CLI falls back to non-interactive.
