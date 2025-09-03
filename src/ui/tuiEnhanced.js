@@ -14,6 +14,8 @@ import { AutonomousAgent } from '../agent.js';
 import { saveSession } from '../session.js';
 import { getContextManager } from '../contextManager.js';
 import { SlashCommandPalette, useSlashCommands } from './SlashCommandPalette.js';
+import { createEvaluator } from '../subAgentEvaluator.js';
+import { createTokenTracker } from '../tokenTracker.js';
 
 const h = React.createElement;
 
@@ -91,6 +93,11 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
   const [contextChecked, setContextChecked] = React.useState(false);
   const [workingDir] = React.useState(initialSession.meta?.cwd || process.cwd());
   const [contextManager] = React.useState(() => getContextManager(workingDir));
+  const [currentAgent, setCurrentAgent] = React.useState(null);
+  const [evaluatingFeedback, setEvaluatingFeedback] = React.useState(false);
+  const [subAgentEvaluator] = React.useState(() => createEvaluator(modelAdapter));
+  const [tokenStatus, setTokenStatus] = React.useState(null);
+  const [agentTokenTracker, setAgentTokenTracker] = React.useState(null);
   
   // Use a ref for session to ensure callbacks always have the latest session data
   const sessionRef = React.useRef(initialSession);
@@ -298,8 +305,62 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
     cancelRequested: () => cancelRequested,
     onRegisterKill: (fn) => {
       killRef.current = fn;
+    },
+    onTokenUpdate: (status) => {
+      setTokenStatus(status);
     }
   }), [cancelRequested, appendMessage, session, saveContextDebounced]);
+
+  // Evaluate user feedback using sub-agent
+  async function evaluateFeedback(userInput) {
+    setEvaluatingFeedback(true);
+    
+    // Show indicator that sub-agent is evaluating
+    appendMessage({ 
+      role: 'system', 
+      text: '🤖 Evaluating feedback...' 
+    });
+    
+    try {
+      // Get evaluation from sub-agent
+      const evaluation = await subAgentEvaluator.evaluate({
+        currentGoal: currentAgent?.currentGoal || 'Unknown',
+        recentActions: currentAgent?.recentActions || [],
+        newUserInput: userInput
+      });
+      
+      if (evaluation.needsFeedback) {
+        // Format and display feedback
+        const formatted = subAgentEvaluator.formatFeedback(evaluation);
+        if (formatted) {
+          appendMessage({ 
+            role: 'system', 
+            text: formatted.display 
+          });
+          
+          // If critical, pause the agent immediately
+          if (evaluation.priority === 'CRITICAL' && currentAgent) {
+            await currentAgent.pauseForFeedback(evaluation);
+            appendMessage({ 
+              role: 'system', 
+              text: '⏸️ Agent paused to process critical feedback' 
+            });
+          } else if (evaluation.priority === 'IMPORTANT' && currentAgent) {
+            // For important feedback, add to agent's context
+            await currentAgent.pauseForFeedback(evaluation);
+          }
+        }
+      } else {
+        // No feedback needed - remove the evaluating message
+        setMessages(msgs => msgs.filter(m => m.text !== '🤖 Evaluating feedback...'));
+      }
+    } catch (error) {
+      console.error('Feedback evaluation failed:', error);
+      // Don't show error to user - fail gracefully
+    } finally {
+      setEvaluatingFeedback(false);
+    }
+  }
 
   async function runAgent(goal) {
     setBusy(true);
@@ -329,6 +390,12 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
         session,
         autoConfirm: options.autoConfirm
       });
+      
+      // Store agent reference for feedback evaluation
+      setCurrentAgent(agent);
+      
+      // Store the agent's token tracker for status display
+      setAgentTokenTracker(agent.getTokenTracker());
 
       const result = await agent.execute(goal, ui);
       
@@ -351,6 +418,7 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
       setBusy(false);
       setModelBusy(false);
       setModelName('');
+      setCurrentAgent(null); // Clear agent reference
       
       // Process queued inputs
       setQueue((q) => {
@@ -374,6 +442,39 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
       sessionRef.current.id = data.session.id; // Keep the original session ID
       sessionRef.current.createdAt = data.session.createdAt; // Keep original creation time
       
+      // Estimate token usage from loaded history for display
+      if (data.session.history?.length > 0) {
+        // Create a temporary token tracker just for estimation
+        const tempTracker = createTokenTracker();
+        
+        // Estimate tokens from loaded conversation
+        // Collect all text from different history entry types
+        const conversationTexts = data.session.history.map(h => {
+          const parts = [];
+          if (h.message) parts.push(h.message);
+          if (h.thinking) parts.push(h.thinking);
+          if (h.action) parts.push(JSON.stringify(h.action));
+          if (h.tool) parts.push(h.tool);
+          if (h.params) parts.push(JSON.stringify(h.params));
+          if (h.result) parts.push(JSON.stringify(h.result));
+          return parts.join(' ');
+        });
+        
+        const totalText = conversationTexts.join(' ');
+        const estimatedTokens = Math.round(totalText.length / 4); // Rough estimate: 1 token ≈ 4 chars
+        
+        // Update token tracker with estimated usage
+        tempTracker.updateFromResponse({
+          inputTokenCount: estimatedTokens,
+          outputTokenCount: 0,
+          totalTokens: estimatedTokens
+        });
+        
+        // Update UI with token status
+        const status = tempTracker.getStatusBarText();
+        setTokenStatus(status);
+      }
+      
       setMessages([
         { role: 'context', text: 'Context resumed from previous session' },
         { role: 'system', text: `Loaded ${sessionRef.current.history.length} history items and ${sessionRef.current.tasks.length} tasks` },
@@ -396,7 +497,8 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
       appendMessage({ role: 'system', text: '/init - Inspect project (read-only)' });
       appendMessage({ role: 'system', text: '/model - Show model configuration' });
       appendMessage({ role: 'system', text: '/thinking <n> - Set thinking budget' });
-      appendMessage({ role: 'system', text: '/clear - Clear message history' });
+      appendMessage({ role: 'system', text: '/tokens - Show detailed token usage' });
+      appendMessage({ role: 'system', text: '/trim - Manually trim conversation history' });
       appendMessage({ role: 'system', text: '/exit - Exit TaskCLI' });
       return true;
     }
@@ -419,12 +521,37 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
     }
     
     if (command === '/status') {
+      appendMessage({ role: 'system', text: '📊 Session & Context Status:' });
+      
+      // Show context status
       const summary = contextManager.getContextSummary();
       if (summary) {
-        appendMessage({ role: 'context', text: `Context: ${summary.age} old, ${summary.taskCount} tasks, ${summary.historyCount} history items` });
+        appendMessage({ role: 'context', text: `• Context: ${summary.age} old, ${summary.taskCount} tasks, ${summary.historyCount} history items` });
       } else {
-        appendMessage({ role: 'system', text: 'No context saved yet' });
+        appendMessage({ role: 'system', text: '• No context saved yet' });
       }
+      
+      // Show token usage
+      if (agentTokenTracker) {
+        const status = agentTokenTracker.getStatus();
+        const statusBar = agentTokenTracker.getStatusBarText();
+        appendMessage({ role: 'system', text: `• Context Usage: ${statusBar.text}` });
+        
+        if (status.inputPercentage >= 50) {
+          appendMessage({ role: 'yellow', text: `  ⚠️ Above 50% - compaction may trigger soon` });
+        } else if (status.inputPercentage >= 85) {
+          appendMessage({ role: 'error', text: `  🚨 Critical - emergency trimming imminent` });
+        }
+      } else if (tokenStatus) {
+        // If no active agent but we have estimated status from resume
+        appendMessage({ role: 'system', text: `• Context Usage (est): ${tokenStatus.text}` });
+      }
+      
+      // Show session info
+      appendMessage({ role: 'system', text: `• Session: ${sessionRef.current.id}` });
+      appendMessage({ role: 'system', text: `• History: ${sessionRef.current.history.length} items` });
+      appendMessage({ role: 'system', text: `• Tasks: ${sessionRef.current.tasks.length}` });
+      
       return true;
     }
     
@@ -482,6 +609,28 @@ Remember: Only READ files, do not write or modify anything.`;
       return true;
     }
     
+    if (command === '/tokens') {
+      // Show detailed token usage report
+      if (currentAgent) {
+        const tracker = currentAgent.getTokenTracker();
+        const report = tracker.getDetailedReport();
+        appendMessage({ role: 'system', text: report });
+      } else {
+        appendMessage({ role: 'system', text: 'No active session to show token usage for.' });
+      }
+      return true;
+    }
+    
+    if (command === '/trim') {
+      // Automatic trimming information
+      appendMessage({ role: 'system', text: '🧠 Intelligent Context Management:' });
+      appendMessage({ role: 'system', text: '• At 50% capacity: Intelligent compaction preserves critical info' });
+      appendMessage({ role: 'system', text: '• At 85% capacity: Emergency trimming if needed' });
+      appendMessage({ role: 'system', text: '• Compaction preserves: objectives, errors, active tasks' });
+      appendMessage({ role: 'system', text: '• Target reduction: 60-70% while keeping essential context' });
+      return true;
+    }
+    
     if (command === '/exit') {
       exit();
       return true;
@@ -490,7 +639,7 @@ Remember: Only READ files, do not write or modify anything.`;
     // Check if this looks like a partial slash command
     if (command.startsWith('/')) {
       // Get available commands from SlashCommandPalette
-      const availableCommands = ['/help', '/resume', '/save', '/clear', '/status', '/init', '/model', '/thinking', '/exit'];
+      const availableCommands = ['/help', '/resume', '/save', '/clear', '/status', '/init', '/model', '/thinking', '/tokens', '/trim', '/exit'];
       
       // Check if any command starts with this input
       const matches = availableCommands.filter(c => c.startsWith(command));
@@ -583,7 +732,13 @@ Remember: Only READ files, do not write or modify anything.`;
           setHistIdx(-1);
           
           if (busy) {
+            // Add to queue
             setQueue((q) => [...q, trimmed]);
+            
+            // Run sub-agent evaluator to check if this needs immediate attention
+            if (currentAgent && !evaluatingFeedback) {
+              evaluateFeedback(trimmed);
+            }
           } else {
             runAgent(trimmed);
           }
@@ -595,17 +750,26 @@ Remember: Only READ files, do not write or modify anything.`;
       Box,
       { marginTop: 1, flexDirection: 'column' },
       h(Box, { justifyContent: 'space-between' },
-        h(Text, { color: 'cyan' }, busy ? 'Working...' : 'Ready'),
+        h(Text, { color: 'cyan' }, 
+          evaluatingFeedback ? '🤖 Evaluating...' : 
+          busy ? 'Working...' : 
+          'Ready'
+        ),
         modelBusy
           ? h(Text, { color: 'gray' }, h(Spinner), ` ${modelName}`)
+          : evaluatingFeedback 
+          ? h(Text, { color: 'yellow' }, h(Spinner), ' Sub-agent analyzing feedback')
           : h(Text, { color: 'gray' }, 'Ctrl-C: exit | ↑↓: history | /: commands')
       ),
-      h(Box, null,
-        h(Text, { color: 'blue', bold: true }, '📁 '),
-        h(Text, { color: 'white', dimColor: true }, workingDir),
-        contextManager.hasContext() 
-          ? h(Text, { color: 'green' }, ' [✓ context]')
-          : null
+      h(Box, { justifyContent: 'space-between', width: '100%' },
+        h(Box, null,
+          h(Text, { color: 'blue', bold: true }, '📁 '),
+          h(Text, { color: 'white', dimColor: true }, workingDir),
+          contextManager.hasContext() 
+            ? h(Text, { color: 'green' }, ' [✓ context]')
+            : null
+        ),
+        tokenStatus ? h(Text, { color: tokenStatus.color }, ' ' + tokenStatus.text) : null
       )
     ),
   );

@@ -6,6 +6,8 @@
 
 import chalk from 'chalk';
 import { toolRegistry } from './tools/index.js';
+import { createTokenTracker } from './tokenTracker.js';
+import { createContextCompactor } from './contextCompactor.js';
 
 const AGENT_SYSTEM_PROMPT = `You are TaskCLI, an autonomous coding assistant. Your philosophy: "Always Works™" - untested code is just a guess, not a solution.
 
@@ -59,42 +61,49 @@ Before making ANY code changes, you MUST:
 
 ## Core Rules
 
-1. **Verify Everything**: After EVERY change, run the build/test/lint. No exceptions.
+1. **Follow User Instructions Precisely**: 
+   - If user asks for "browser APIs", use browser APIs (not external files)
+   - If user asks for "function X", create function X (not function Y that does something similar)
+   - If you CANNOT follow instructions exactly, explain WHY and get confirmation before proceeding
+
+2. **Verify Everything**: After EVERY change, run the build/test/lint. No exceptions.
    - UI Changes: Actually verify the component renders
    - API Changes: Make the actual API call and check response
    - Logic Changes: Run the specific scenario
    - Config Changes: Restart and verify it loads
 
-2. **The Embarrassment Test**: Before marking complete, ask yourself:
+3. **The Embarrassment Test**: Before marking complete, ask yourself:
    "If the user records trying this and it fails, will I feel embarrassed?"
 
-3. **Search Before Assuming**: When you encounter an error, use search_code to understand the codebase before making changes.
+4. **Search Before Assuming**: When you encounter an error, use search_code to understand the codebase before making changes.
 
-4. **Read Before Editing**: Always read_file before using edit_file to understand the current state.
+5. **Read Before Editing**: Always read_file before using edit_file to understand the current state.
    - IMPORTANT: Copy text EXACTLY as shown in read_file output for edit_file 'find' parameter
    - Include enough context to make the find string unique
    - Preserve ALL whitespace, tabs, and newlines exactly
 
-5. **Error Recovery with Diligence**:
+6. **Error Recovery with Diligence**:
    - If a command fails: read error output COMPLETELY
    - Search for ALL mentioned files/symbols
    - Make targeted fixes using edit_file
    - ALWAYS retry the command to verify the fix
    - After 3 failed attempts, admit you need guidance (no shame in this)
 
-6. **Non-Interactive Testing Strategy**:
+7. **Non-Interactive Testing Strategy**:
    - Use run_command with explicit flags (--no-interactive, -y, etc.)
    - For builds: npm run build && echo "BUILD_SUCCESS"
    - For tests: npm test -- --watchAll=false
    - For servers: Use --port flags and curl to verify
    - Check exit codes: && echo "SUCCESS" || echo "FAILED"
 
-7. **Completion Checklist** (MUST complete ALL):
+8. **Completion Checklist** (MUST complete ALL):
    - [ ] Code compiles/builds without errors
    - [ ] Linting passes (if available)
    - [ ] Type checking passes (if TypeScript)
    - [ ] Feature actually works (tested programmatically)
    - [ ] No new warnings introduced
+   - [ ] Completion message accurately describes what was ACTUALLY done (not what was requested)
+   - [ ] If you deviated from instructions, explicitly state why and what you did instead
 
 ## Common Bug Patterns (ALWAYS check for these)
 
@@ -230,12 +239,47 @@ export class AutonomousAgent {
       session: options.session || { history: [] }
     };
     this.attempts = {}; // Track retry attempts
+    this.isPaused = false;
+    this.pendingFeedback = null;
+    this.recentActions = []; // Track recent actions for sub-agent context
+    this.currentGoal = null;
+    this.tokenTracker = createTokenTracker(); // Initialize token tracker
+    this.contextCompactor = createContextCompactor(modelAdapter); // Initialize context compactor
+    this.compactionInProgress = false;
+    this.lastCompactionAt = 0; // Track last compaction percentage
+    this.recentErrors = []; // Track recent errors for context preservation
+  }
+
+  /**
+   * Get the token tracker for external access
+   */
+  getTokenTracker() {
+    return this.tokenTracker;
+  }
+
+  /**
+   * Pause the agent to process feedback
+   */
+  async pauseForFeedback(feedback) {
+    this.isPaused = true;
+    this.pendingFeedback = feedback;
+  }
+
+  /**
+   * Resume the agent after processing feedback
+   */
+  resume() {
+    this.isPaused = false;
+    const feedback = this.pendingFeedback;
+    this.pendingFeedback = null;
+    return feedback;
   }
 
   /**
    * Main execution loop - keeps running until task is complete
    */
   async execute(userGoal, ui) {
+    this.currentGoal = userGoal;
     // Smoke test mode - deterministic actions
     if (process.env.TASKCLI_SMOKE === '1') {
       const smokeActions = [
@@ -276,6 +320,80 @@ export class AutonomousAgent {
     while (iteration < MAX_ITERATIONS) {
       iteration++;
 
+      // Check if we're paused for feedback
+      if (this.isPaused && this.pendingFeedback) {
+        const feedback = this.resume();
+        
+        // Add feedback to conversation history
+        if (feedback && feedback.needsFeedback) {
+          conversationHistory.push({
+            role: 'system',
+            content: `User feedback during execution: ${feedback.feedback}\nPriority: ${feedback.priority}`
+          });
+          
+          // Log that we received feedback
+          if (ui?.onLog) {
+            const icon = feedback.priority === 'CRITICAL' ? '🔴' : 
+                        feedback.priority === 'IMPORTANT' ? '🟡' : '🔵';
+            ui.onLog(chalk.cyan(`\n${icon} Feedback incorporated: ${feedback.feedback}`));
+          }
+        }
+      }
+
+      // Check if we should proactively compact based on token usage
+      const tokenStatus = this.tokenTracker.getStatus();
+      
+      // Be more aggressive with compaction if we're seeing large results
+      const hasLargeResults = conversationHistory.some(msg => 
+        msg.content && msg.content.length > 50000
+      );
+      const compactionThreshold = hasLargeResults ? 40 : 50; // Lower threshold with large data
+      
+      const shouldCompact = tokenStatus.inputPercentage >= compactionThreshold && 
+                           !this.compactionInProgress &&
+                           tokenStatus.inputPercentage > this.lastCompactionAt + 10; // Don't compact too frequently
+      
+      if (shouldCompact) {
+        this.compactionInProgress = true;
+        
+        if (ui?.onLog) {
+          ui.onLog(chalk.yellow(`\n📦 Context at ${Math.round(tokenStatus.inputPercentage)}% capacity - intelligently compacting...`));
+        }
+        
+        // Prepare additional context for compactor
+        const additionalContext = {
+          currentGoal: this.currentGoal,
+          recentErrors: this.recentErrors.slice(-5),
+          activeTasks: this.recentActions.filter(a => a.includes('tool:')).slice(-10)
+        };
+        
+        // Use intelligent compaction
+        const compacted = await this.contextCompactor.compactConversation(
+          conversationHistory, 
+          additionalContext
+        );
+        
+        if (compacted && compacted.length < conversationHistory.length) {
+          const stats = this.contextCompactor.getCompactionStats(conversationHistory, compacted);
+          
+          if (ui?.onLog) {
+            ui.onLog(chalk.green(`✓ Context compacted: ${stats.saved} tokens saved (${stats.reductionPercent}% reduction)`));
+            ui.onLog(chalk.gray(`  Preserved: objectives, errors, active tasks, recent context`));
+          }
+          
+          conversationHistory = compacted;
+          this.lastCompactionAt = tokenStatus.inputPercentage;
+        }
+        
+        this.compactionInProgress = false;
+      } else if (this.tokenTracker.shouldTrimHistory() && tokenStatus.inputPercentage >= 85) {
+        // Emergency trim if we're getting critically close despite compaction
+        if (ui?.onLog) {
+          ui.onLog(chalk.red('\n🚨 Critical token limit - emergency trimming...'));
+        }
+        conversationHistory = await this._trimConversationHistory(conversationHistory, ui) || conversationHistory;
+      }
+      
       // Get next action from LLM
       const response = await this._getNextAction(conversationHistory, ui);
       
@@ -317,17 +435,45 @@ export class AutonomousAgent {
           ui.onLog(chalk.red('━'.repeat(60)));
         }
         
-        // Retry with a stronger reminder about JSON format
-        if (iteration <= 2) {
-          if (ui?.onLog) ui.onLog(chalk.yellow('\nRetrying with clearer instructions...'));
+        // Retry with self-correction
+        const retryAttempt = this.attempts['invalid-response'] || 0;
+        if (retryAttempt < 3) {
+          this.attempts['invalid-response'] = retryAttempt + 1;
+          
+          if (ui?.onLog) ui.onLog(chalk.yellow(`\n🔄 Self-correcting (attempt ${retryAttempt + 1}/3)...`));
+          
+          // Build a corrective prompt based on what we received
+          let correctivePrompt = 'CRITICAL: Your response is missing required fields.\n\n';
+          
+          if (!response) {
+            correctivePrompt += 'You returned null or undefined. You MUST return valid JSON.\n';
+          } else if (!response.action) {
+            correctivePrompt += `You returned: ${JSON.stringify(response).substring(0, 200)}\n`;
+            correctivePrompt += 'This is missing the "action" field.\n';
+          }
+          
+          correctivePrompt += '\nCorrect format:\n';
+          correctivePrompt += '{\n';
+          correctivePrompt += '  "thinking": "your reasoning here",\n';
+          correctivePrompt += '  "action": {\n';
+          correctivePrompt += '    "type": "tool" | "complete" | "need_help",\n';
+          correctivePrompt += '    "tool": "tool_name" (if type is tool),\n';
+          correctivePrompt += '    "params": {...} (if type is tool),\n';
+          correctivePrompt += '    "message": "..." (if type is complete or need_help)\n';
+          correctivePrompt += '  }\n';
+          correctivePrompt += '}\n\n';
+          correctivePrompt += 'Please provide a valid response with the action field.';
           
           conversationHistory.push({
             role: 'system',
-            content: 'CRITICAL: You MUST respond with valid JSON only. No markdown, no explanations. The JSON must have "action" field. Example: {"thinking": "analyzing", "action": {"type": "tool", "tool": "read_file", "params": {"path": "file.js"}}}'
+            content: correctivePrompt
           });
           
           continue; // Try again
         }
+        
+        // Reset retry counter on failure
+        delete this.attempts['invalid-response'];
         
         if (ui?.onLog) {
           ui.onLog(chalk.red('\n❌ Failed after retries'));
@@ -342,6 +488,12 @@ export class AutonomousAgent {
       }
 
       const { action } = response;
+
+      // Track recent actions for sub-agent context
+      this.recentActions.push(`${action.type}: ${action.tool || action.message || 'unknown'}`);
+      if (this.recentActions.length > 10) {
+        this.recentActions.shift(); // Keep only last 10 actions
+      }
 
       // Handle different action types
       switch (action.type) {
@@ -364,9 +516,18 @@ export class AutonomousAgent {
             content: JSON.stringify(response)
           });
           
+          // Don't truncate - rely on intelligent compaction instead
+          const toolResultContent = JSON.stringify(result, null, 2);
+          
+          // Check if result is large and suggest compaction
+          if (toolResultContent.length > 50000 && ui?.onLog) {
+            const sizeKB = Math.round(toolResultContent.length / 1024);
+            ui.onLog(chalk.yellow(`  📊 Large result (${sizeKB}KB) - compaction will handle if needed`));
+          }
+          
           conversationHistory.push({
             role: 'user',
-            content: `Tool result:\n${JSON.stringify(result, null, 2)}`
+            content: `Tool result:\n${toolResultContent}`
           });
 
           // Track retry attempts for error recovery
@@ -421,6 +582,23 @@ export class AutonomousAgent {
       
       if (ui?.onModelEnd) ui.onModelEnd();
       
+      // Update token tracker with usage metadata
+      const usageMetadata = response?.usageMetadata || this.model.getLastUsageMetadata();
+      if (usageMetadata) {
+        this.tokenTracker.updateFromResponse(usageMetadata);
+        
+        // Check for warnings
+        const warning = this.tokenTracker.getWarningMessage();
+        if (warning && ui?.onLog) {
+          ui.onLog(warning);
+        }
+        
+        // Pass token status to UI
+        if (ui?.onTokenUpdate) {
+          ui.onTokenUpdate(this.tokenTracker.getStatusBarText());
+        }
+      }
+      
       // Display thoughts if available
       const thoughts = this.model.getLastThoughts();
       if (thoughts && ui?.onLog) {
@@ -436,7 +614,36 @@ export class AutonomousAgent {
     } catch (error) {
       if (ui?.onModelEnd) ui.onModelEnd();
       
-      // Comprehensive error logging
+      // Check if this is a token limit error
+      const isTokenLimitError = error.message?.includes('exceeds the maximum number of tokens') || 
+                               error.message?.includes('token count') ||
+                               error.message?.includes('1048576');
+      
+      if (isTokenLimitError) {
+        if (ui?.onLog) {
+          ui.onLog(chalk.yellow('\n⚠️ Token Limit Exceeded'));
+          ui.onLog(chalk.yellow('━'.repeat(60)));
+          ui.onLog(chalk.yellow('The conversation has grown too large. Attempting to recover...'));
+        }
+        
+        // Try to recover by trimming the conversation history
+        const trimmed = await this._trimConversationHistory(conversationHistory, ui);
+        if (trimmed) {
+          conversationHistory = trimmed;
+          
+          if (ui?.onLog) {
+            ui.onLog(chalk.green('✓ Trimmed conversation history'));
+            ui.onLog(chalk.gray(`Reduced from ${history?.length || 0} to ${trimmed.length} messages`));
+            ui.onLog(chalk.yellow('Retrying with smaller context...'));
+            ui.onLog(chalk.yellow('━'.repeat(60)));
+          }
+          
+          // Retry with trimmed context
+          return await this._getNextAction(trimmed, ui);
+        }
+      }
+      
+      // Comprehensive error logging for other errors
       if (ui?.onLog) {
         ui.onLog(chalk.red('\n❌ Model API Error'));
         ui.onLog(chalk.red('━'.repeat(60)));
@@ -464,6 +671,74 @@ export class AutonomousAgent {
       console.error('Full error object:', error);
       return null;
     }
+  }
+
+  /**
+   * Trim conversation history to reduce token count
+   * Keep system prompt, initial goal, and recent interactions
+   */
+  async _trimConversationHistory(history, ui) {
+    if (!history || history.length < 10) return null;
+    
+    // First attempt: Try intelligent compaction if not already in progress
+    if (!this.compactionInProgress) {
+      try {
+        this.compactionInProgress = true;
+        
+        // Prepare additional context for compaction
+        const additionalContext = {
+          currentGoal: this.currentGoal,
+          recentErrors: this.recentErrors.slice(-5),
+          activeTasks: this.recentActions.slice(-5)
+        };
+        
+        if (ui?.onLog) {
+          ui.onLog(chalk.yellow('🧠 Attempting intelligent context compaction...'));
+        }
+        
+        const compacted = await this.contextCompactor.compactConversation(
+          history, 
+          additionalContext
+        );
+        
+        if (compacted && compacted.length < history.length) {
+          const stats = this.contextCompactor.getCompactionStats(history, compacted);
+          if (ui?.onLog) {
+            ui.onLog(chalk.green(`✓ Context compacted: ${stats.reductionPercent}% reduction`));
+            ui.onLog(chalk.gray(`Saved ${stats.saved} tokens`));
+          }
+          this.compactionInProgress = false;
+          return compacted;
+        }
+        
+        this.compactionInProgress = false;
+      } catch (error) {
+        this.compactionInProgress = false;
+        if (ui?.onLog) {
+          ui.onLog(chalk.yellow('⚠️ Compaction failed, falling back to simple trim'));
+        }
+      }
+    }
+    
+    // Fallback: Simple trimming if compaction fails or is unavailable
+    const systemPrompt = history[0];
+    const initialGoal = history[1];
+    
+    // Keep only the last 6-8 interactions (3-4 exchanges)
+    const recentHistory = history.slice(-8);
+    
+    // Build trimmed history
+    const trimmed = [
+      systemPrompt,
+      initialGoal,
+      {
+        role: 'system',
+        content: '[Previous conversation trimmed to reduce token count. Continue with the current task.]'
+      },
+      ...recentHistory
+    ];
+    
+    return trimmed;
   }
 
   /**

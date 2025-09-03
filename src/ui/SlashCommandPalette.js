@@ -54,6 +54,16 @@ const SLASH_COMMANDS = [
     command: '/exit',
     description: 'Exit TaskCLI',
     category: 'general'
+  },
+  {
+    command: '/tokens',
+    description: 'Show detailed token usage report',
+    category: 'context'
+  },
+  {
+    command: '/trim',
+    description: 'Information about automatic conversation trimming',
+    category: 'context'
   }
 ];
 

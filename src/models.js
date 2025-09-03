@@ -79,6 +79,7 @@ export class ModelAdapter {
       // Extract thoughts and text from response
       let thoughts = '';
       let responseText = '';
+      let usageMetadata = null;
       
       if (response.candidates?.[0]?.content?.parts) {
         for (const part of response.candidates[0].content.parts) {
@@ -88,6 +89,12 @@ export class ModelAdapter {
             responseText += part.text;
           }
         }
+      }
+      
+      // Extract usage metadata
+      if (response.usageMetadata) {
+        usageMetadata = response.usageMetadata;
+        this.lastUsageMetadata = usageMetadata;
       }
       
       // Store thoughts for later retrieval
@@ -116,13 +123,23 @@ export class ModelAdapter {
         if (!text) {
           throw new Error('Empty response from model');
         }
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        // Add usage metadata to the response
+        if (usageMetadata) {
+          parsed.usageMetadata = usageMetadata;
+        }
+        return parsed;
       } catch (parseError) {
         // Try to extract JSON from response
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           try {
-            return JSON.parse(jsonMatch[0]);
+            const parsed = JSON.parse(jsonMatch[0]);
+            // Add usage metadata to the response
+            if (usageMetadata) {
+              parsed.usageMetadata = usageMetadata;
+            }
+            return parsed;
           } catch (innerError) {
             console.error('\n❌ Model Response Parse Error');
             console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -222,6 +239,7 @@ export class ModelAdapter {
       // Extract thoughts and text from response
       let thoughts = '';
       let responseText = '';
+      let usageMetadata = null;
       
       if (response.candidates?.[0]?.content?.parts) {
         for (const part of response.candidates[0].content.parts) {
@@ -231,6 +249,12 @@ export class ModelAdapter {
             responseText += part.text;
           }
         }
+      }
+      
+      // Extract usage metadata
+      if (response.usageMetadata) {
+        usageMetadata = response.usageMetadata;
+        this.lastUsageMetadata = usageMetadata;
       }
       
       // Store thoughts for later retrieval
@@ -257,6 +281,13 @@ export class ModelAdapter {
    */
   getLastThoughts() {
     return this.lastThoughts;
+  }
+
+  /**
+   * Get the last usage metadata from the model
+   */
+  getLastUsageMetadata() {
+    return this.lastUsageMetadata;
   }
 }
 
