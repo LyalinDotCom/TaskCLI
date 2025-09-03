@@ -232,6 +232,17 @@ export class AutonomousAgent {
       const response = await this.model.generateAction(prompt, history, 0.1);
       
       if (ui?.onModelEnd) ui.onModelEnd();
+      
+      // Display thoughts if available
+      const thoughts = this.model.getLastThoughts();
+      if (thoughts && ui?.onLog) {
+        ui.onLog(chalk.gray('\n💭 Model thinking:'));
+        ui.onLog(chalk.gray('─'.repeat(50)));
+        // Show first 500 chars of thoughts
+        const thoughtPreview = thoughts.length > 500 ? thoughts.substring(0, 500) + '...' : thoughts;
+        ui.onLog(chalk.gray(thoughtPreview));
+        ui.onLog(chalk.gray('─'.repeat(50)));
+      }
 
       return response;
     } catch (error) {

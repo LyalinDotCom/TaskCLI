@@ -42,7 +42,8 @@ function parseArgs(argv) {
     cwd: process.cwd(),
     headless: false,
     yes: false,
-    thinkingBudget: -1  // Default to dynamic thinking
+    thinkingBudget: -1,  // Default to dynamic thinking
+    showThoughts: true    // Default to showing thoughts
   };
   
   const rest = [];
@@ -59,6 +60,8 @@ function parseArgs(argv) {
       args.cwd = path.resolve(argv[++i]);
     } else if (a === '--thinking' && argv[i + 1]) {
       args.thinkingBudget = parseInt(argv[++i], 10);
+    } else if (a === '--no-thoughts') {
+      args.showThoughts = false;
     } else if (a === '-h' || a === '--help') {
       args.help = true;
     } else {
@@ -83,6 +86,7 @@ Options:
   -y, --yes         Auto-confirm all actions
   --cwd PATH        Working directory for tasks
   --thinking NUM    Thinking budget for Gemini 2.5 Pro (default: -1 for dynamic, 0 to disable)
+  --no-thoughts     Hide model thinking process from output
   -h, --help        Show help
 
 Examples:
@@ -123,8 +127,8 @@ export async function main() {
     thinkingBudget: args.thinkingBudget
   });
   
-  // Create model adapter with thinking budget
-  const modelAdapter = createModelAdapter(args.thinkingBudget);
+  // Create model adapter with thinking budget and thoughts display
+  const modelAdapter = createModelAdapter(args.thinkingBudget, args.showThoughts);
   
   // Interactive mode (default if TTY and not headless)
   if (!args.headless && process.stdin.isTTY) {

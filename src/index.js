@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import { main as mainV2 } from './index2.js';
 import { ensureSessionDir, newSession, saveSession } from './session.js';
 import { printHeader } from './ui.js';
-import { startTUI } from './ui/tui.js';
+// import { startTUI } from './ui/tui.js'; // Not used, v2 uses tui2.js
 import { runDoctor } from './doctor.js';
 
 function loadEnv() {

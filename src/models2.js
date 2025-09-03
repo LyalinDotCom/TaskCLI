@@ -6,11 +6,13 @@
 import { GoogleGenAI } from '@google/genai';
 
 export class ModelAdapter {
-  constructor(apiKey, thinkingBudget = -1) {
+  constructor(apiKey, thinkingBudget = -1, showThoughts = true) {
     this.ai = new GoogleGenAI({ 
       apiKey: apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY 
     });
     this.thinkingBudget = thinkingBudget; // -1 for dynamic thinking (let model decide)
+    this.showThoughts = showThoughts; // Whether to show thinking process
+    this.lastThoughts = null; // Store last thought summary
   }
 
   /**
@@ -58,7 +60,7 @@ export class ModelAdapter {
       if (this.thinkingBudget !== undefined) {
         config.thinkingConfig = {
           thinkingBudget: this.thinkingBudget,
-          includeThoughts: false  // We don't need thought summaries for agent actions
+          includeThoughts: this.showThoughts  // Include thoughts if enabled
         };
       }
 
@@ -68,23 +70,70 @@ export class ModelAdapter {
         config: config
       });
 
-      // Parse JSON response
+      // Extract thoughts and text from response
+      let thoughts = '';
+      let responseText = '';
+      
+      if (response.candidates?.[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.thought && part.text) {
+            thoughts += part.text + '\n';
+          } else if (part.text) {
+            responseText += part.text;
+          }
+        }
+      }
+      
+      // Store thoughts for later retrieval
+      if (thoughts) {
+        this.lastThoughts = thoughts.trim();
+      }
+      
+      // Use extracted text or fallback
+      const text = responseText || response.text || '';
+      
+      // Parse JSON response with better error handling
       try {
-        const text = response.text || response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (!text) {
+          throw new Error('Empty response from model');
+        }
         return JSON.parse(text);
-      } catch (e) {
-        console.error('Failed to parse JSON:', response.text);
-        
+      } catch (parseError) {
         // Try to extract JSON from response
-        const jsonMatch = response.text?.match(/\{[\s\S]*\}/);
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          return JSON.parse(jsonMatch[0]);
+          try {
+            return JSON.parse(jsonMatch[0]);
+          } catch (innerError) {
+            console.error('\n❌ Model Response Parse Error');
+            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.error('Raw response:', text.substring(0, 500));
+            if (thoughts) {
+              console.error('\nModel thoughts:', thoughts.substring(0, 500));
+            }
+            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            throw new Error(`Invalid JSON in model response: ${innerError.message}`);
+          }
         }
         
-        throw new Error('No valid JSON in response');
+        console.error('\n❌ Model Response Error');
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        console.error('Expected JSON but received:', text.substring(0, 500));
+        if (thoughts) {
+          console.error('\nModel thoughts:', thoughts.substring(0, 500));
+        }
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        throw new Error('Model did not return valid JSON. This might be due to an API issue or prompt problem.');
       }
     } catch (error) {
-      console.error('Model error:', error);
+      // Enhanced error reporting
+      if (error.message?.includes('API key')) {
+        throw new Error('Invalid or missing API key. Please check GEMINI_API_KEY or GOOGLE_API_KEY.');
+      } else if (error.message?.includes('quota')) {
+        throw new Error('API quota exceeded. Please wait or upgrade your plan.');
+      } else if (error.message?.includes('rate')) {
+        throw new Error('Rate limit hit. Please wait a moment and try again.');
+      }
       throw error;
     }
   }
@@ -131,7 +180,7 @@ export class ModelAdapter {
       if (this.thinkingBudget !== undefined) {
         config.thinkingConfig = {
           thinkingBudget: this.thinkingBudget,
-          includeThoughts: false  // Keep responses clean
+          includeThoughts: this.showThoughts  // Include thoughts if enabled
         };
       }
 
@@ -141,18 +190,51 @@ export class ModelAdapter {
         config: config
       });
 
-      return response.text || response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      // Extract thoughts and text from response
+      let thoughts = '';
+      let responseText = '';
+      
+      if (response.candidates?.[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.thought && part.text) {
+            thoughts += part.text + '\n';
+          } else if (part.text) {
+            responseText += part.text;
+          }
+        }
+      }
+      
+      // Store thoughts for later retrieval
+      if (thoughts) {
+        this.lastThoughts = thoughts.trim();
+      }
+      
+      return responseText || response.text || '';
     } catch (error) {
-      console.error('Model error:', error);
+      // Enhanced error reporting
+      if (error.message?.includes('API key')) {
+        throw new Error('Invalid or missing API key. Please check GEMINI_API_KEY or GOOGLE_API_KEY.');
+      } else if (error.message?.includes('quota')) {
+        throw new Error('API quota exceeded. Please wait or upgrade your plan.');
+      } else if (error.message?.includes('rate')) {
+        throw new Error('Rate limit hit. Please wait a moment and try again.');
+      }
       throw error;
     }
   }
+
+  /**
+   * Get the last thinking summary
+   */
+  getLastThoughts() {
+    return this.lastThoughts;
+  }
 }
 
-export function createModelAdapter(thinkingBudget = -1) {
+export function createModelAdapter(thinkingBudget = -1, showThoughts = true) {
   const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     console.warn('No API key found. Model calls will fail.');
   }
-  return new ModelAdapter(apiKey, thinkingBudget);
+  return new ModelAdapter(apiKey, thinkingBudget, showThoughts);
 }
