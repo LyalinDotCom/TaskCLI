@@ -4,11 +4,11 @@ This file provides guidance to AI agents (Gemini, Codex, Claude Code, Copilot, C
 
 ## Project Overview
 
-TaskCLI is an AI-powered task orchestration CLI that uses Google's Gemini models to break down goals into actionable tasks and execute them autonomously. It's part of the larger Flash project monorepo and provides both interactive TUI and headless command-line modes.
+TaskCLI is an AI-powered task orchestration CLI that uses Google's Gemini models to break down goals into actionable tasks and execute them autonomously. It provides both interactive TUI and headless command-line modes.
 
 **Fixed Model Configuration:**
 - Default (v2): Gemini 2.5 Pro only with 8000 token thinking budget (unified planning/execution)
-- Legacy (--v1): Gemini 2.5 Flash (planning) + Gemini 2.5 Pro (execution)
+- Legacy (--v1): Gemini Flash (planning) + Gemini Pro (execution)
 - No model overrides are supported - these are the only models used
 
 ## Development Commands
@@ -31,7 +31,7 @@ npm run check                  # Full validation (doctor + smoke + pack)
 node bin/taskcli.js --help
 node bin/taskcli.js --doctor
 node bin/taskcli.js --yes "goal"  # Auto-confirm shell commands
-node bin/taskcli.js --v1 "goal"   # Use legacy Flash+Pro orchestrator
+node bin/taskcli.js --v1 "goal"   # Use legacy dual-model orchestrator
 
 # Note: --flash-model and --pro-model options are ignored if provided
 ```
@@ -53,28 +53,28 @@ node bin/taskcli.js --v1 "goal"   # Use legacy Flash+Pro orchestrator
    - Analyzes actual error output (not just error messages)
    - Extracts file paths from compilation/build errors
    - Guides Pro to fix specific code issues rather than assuming missing dependencies
-6. **No Flash Dependency**: Uses only Gemini Pro for all decisions and execution
+6. **Single Model Mode**: Uses only Gemini Pro for all decisions and execution
 
 ### Legacy Flow (--v1 flag)
 1. **Entry**: `bin/taskcli.js` → `src/index.js` (main initialization)
-2. **Planning**: `src/orchestrator.js` uses Gemini Flash to break down goals
+2. **Planning**: `src/orchestrator.js` uses Gemini models to break down goals
 3. **Execution**: `src/agent.js` uses Gemini Pro to execute individual tasks
 4. **Tools**: Tasks use tools in `src/tools/` (file ops, shell, search)
 5. **UI**: Interactive mode uses React/Ink components in `src/ui/`
 
 ### Key Components
 - **`src/orchestratorV2.js`**: Default unified Pro-only orchestrator with adaptive execution
-- **`src/orchestrator.js`**: Legacy task planning and execution loop (Flash + Pro)
+- **`src/orchestrator.js`**: Legacy task planning and execution loop (dual-model)
 - **`src/agent.js`**: Pro model agent for task execution
-- **`src/models.js`**: Genkit integration with Flash's AI adapter
+- **`src/models.js`**: Google GenAI SDK integration for model access
 - **`src/adaptive.js`**: Smart command execution with retry logic
 - **`src/session.js`**: Session persistence and memory management
 - **`prompts/pro-system.md`**: Comprehensive system prompt for task execution
 
 ### Model Integration
-- Uses Flash's Genkit package from `../Flash/packages/genkit/`
+- Uses Google's GenAI SDK directly
 - **Fixed models (not configurable):**
-  - Gemini 2.5 Flash for planning (lightweight, fast)
+  - Gemini Flash for planning (lightweight, fast) in v1 mode
   - Gemini 2.5 Pro for execution (with 8000 token thinking budget)
 - Model override arguments and environment variables are ignored
 
@@ -85,7 +85,7 @@ Required `.env` file:
 GEMINI_API_KEY=your-key-here  # or GOOGLE_API_KEY
 ```
 
-**Note:** Model environment variables (FLASH_MODEL, PRO_MODEL, PRO_THINKING, PRO_THINKING_BUDGET) are ignored. Models are hardcoded to Gemini 2.5 Flash and Gemini 2.5 Pro with 8000 thinking budget.
+**Note:** Model environment variables (FLASH_MODEL, PRO_MODEL, PRO_THINKING, PRO_THINKING_BUDGET) are ignored. Models are hardcoded to Gemini Flash and Gemini 2.5 Pro with 8000 thinking budget.
 
 ## Testing Approach
 
@@ -135,7 +135,6 @@ Tools in `src/tools/` follow a consistent pattern:
 ## Dependencies and Requirements
 
 - **Node.js >= 20** required
-- **Flash Genkit**: Must be built at `../Flash/packages/genkit/dist/`
 - **Gemini API Key**: Essential for AI functionality
 - File permissions: `bin/taskcli.js` must be executable
 
