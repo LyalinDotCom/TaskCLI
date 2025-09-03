@@ -11,7 +11,7 @@ import path from 'node:path';
 import TextInput from 'ink-text-input';
 import Spinner from 'ink-spinner';
 import chalk from 'chalk';
-import { AutonomousAgent } from '../agent2.js';
+import { AutonomousAgent } from '../agent.js';
 import { saveSession } from '../session.js';
 
 const h = React.createElement;

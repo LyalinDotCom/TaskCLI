@@ -5,7 +5,7 @@
  */
 
 import chalk from 'chalk';
-import { toolRegistry } from './tools2/index.js';
+import { toolRegistry } from './tools/index.js';
 
 const AGENT_SYSTEM_PROMPT = `You are TaskCLI, an autonomous coding assistant. Your job is to complete the user's task using the available tools.
 
