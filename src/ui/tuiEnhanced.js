@@ -76,42 +76,8 @@ function Message({ role, text }) {
   return h(Box, null, h(Text, null, text));
 }
 
-function ContextPrompt({ contextSummary, onResume, onNew, onDismiss }) {
-  const [choice, setChoice] = React.useState('');
-  
-  return h(
-    Box,
-    { flexDirection: 'column', borderStyle: 'round', borderColor: contextSummary.wasUncleanExit ? 'red' : 'yellow', paddingX: 1, paddingY: 1 },
-    h(Text, { bold: true, color: contextSummary.wasUncleanExit ? 'red' : 'yellow' }, 
-      contextSummary.wasUncleanExit ? '⚠️  Crash Recovery - Previous Context Found' : '📁 Previous Context Found'),
-    h(Text, null, ' '),
-    contextSummary.wasUncleanExit && h(Text, { color: 'red' }, 'TaskCLI appears to have crashed or exited unexpectedly.'),
-    h(Text, { color: 'white' }, `Last session: ${contextSummary.age}`),
-    h(Text, { color: 'gray' }, `Tasks: ${contextSummary.taskCount} | History: ${contextSummary.historyCount}`),
-    h(Text, { color: 'cyan' }, `Last goal: ${contextSummary.lastGoal.substring(0, 60)}${contextSummary.lastGoal.length > 60 ? '...' : ''}`),
-    h(Text, null, ' '),
-    h(Text, { color: 'white' }, 'Would you like to resume? (r)esume / (n)ew / (c)ancel'),
-    h(Box, { marginTop: 1 },
-      h(Text, null, '> '),
-      h(TextInput, {
-        value: choice,
-        onChange: setChoice,
-        onSubmit: (val) => {
-          const ch = val.toLowerCase().trim();
-          if (ch === 'r' || ch === 'resume') {
-            onResume();
-          } else if (ch === 'n' || ch === 'new') {
-            onNew();
-          } else if (ch === 'c' || ch === 'cancel') {
-            onDismiss();
-          }
-        }
-      })
-    )
-  );
-}
 
-export function App({ session, modelAdapter, initialInput, options }) {
+export function App({ session: initialSession, modelAdapter, initialInput, options }) {
   const { exit } = useApp();
   const [input, setInput] = React.useState(initialInput || '');
   const [busy, setBusy] = React.useState(false);
@@ -122,10 +88,13 @@ export function App({ session, modelAdapter, initialInput, options }) {
   const [modelName, setModelName] = React.useState('');
   const [history, setHistory] = React.useState([]);
   const [histIdx, setHistIdx] = React.useState(-1);
-  const [showContextPrompt, setShowContextPrompt] = React.useState(false);
-  const [contextSummary, setContextSummary] = React.useState(null);
-  const [workingDir] = React.useState(session.meta?.cwd || process.cwd());
+  const [contextChecked, setContextChecked] = React.useState(false);
+  const [workingDir] = React.useState(initialSession.meta?.cwd || process.cwd());
   const [contextManager] = React.useState(() => getContextManager(workingDir));
+  
+  // Use a ref for session to ensure callbacks always have the latest session data
+  const sessionRef = React.useRef(initialSession);
+  const session = sessionRef.current;
   
   const MAX_MESSAGES = 150;
   const HISTORY_MAX = 20;
@@ -134,13 +103,31 @@ export function App({ session, modelAdapter, initialInput, options }) {
   // Slash command palette state
   const slashCommands = useSlashCommands(input, setInput);
 
-  // Check for existing context on mount
+  // Check for existing context and show inline message
   React.useEffect(() => {
-    if (!initialInput && contextManager.hasContext()) {
+    if (!contextChecked && !initialInput && !options.noResume) {
+      setContextChecked(true);
+      
       const summary = contextManager.getContextSummary();
       if (summary) {
-        setContextSummary(summary);
-        setShowContextPrompt(true);
+        // Show inline context notification instead of dialog
+        let contextMsg;
+        if (summary.taskCount > 0 || summary.historyCount > 0) {
+          contextMsg = {
+            role: 'system',
+            text: `💾 Previous session found (${summary.age}) with ${summary.taskCount} tasks, ${summary.historyCount} messages. Use /resume to continue or /clear to start fresh.`
+          };
+        } else if (summary.wasUncleanExit) {
+          // Show recovery message for crashed sessions
+          contextMsg = {
+            role: 'system',
+            text: `⚠️ Recovered from unexpected exit (${summary.age}). Use /resume to continue or /clear to start fresh.`
+          };
+        }
+        
+        if (contextMsg) {
+          setMessages([contextMsg]);
+        }
       }
     }
     
@@ -236,7 +223,8 @@ export function App({ session, modelAdapter, initialInput, options }) {
 
   // Debounced save function to avoid too frequent saves
   const saveContextDebounced = React.useCallback(() => {
-    if (contextManager && session) {
+    // Don't save empty sessions (no history and no tasks)
+    if (contextManager && session && (session.history.length > 0 || session.tasks.length > 0)) {
       try {
         contextManager.saveContext(session);
       } catch (error) {
@@ -372,34 +360,18 @@ export function App({ session, modelAdapter, initialInput, options }) {
     const data = contextManager.loadContext();
     if (data) {
       // Merge the loaded session with current session
-      session.history = [...(data.session.history || [])];
-      session.tasks = [...(data.session.tasks || [])];
+      sessionRef.current.history = [...(data.session.history || [])];
+      sessionRef.current.tasks = [...(data.session.tasks || [])];
+      sessionRef.current.id = data.session.id; // Keep the original session ID
+      sessionRef.current.createdAt = data.session.createdAt; // Keep original creation time
+      
       setMessages([
         { role: 'context', text: 'Context resumed from previous session' },
-        { role: 'system', text: `Loaded ${session.history.length} history items and ${session.tasks.length} tasks` },
+        { role: 'system', text: `Loaded ${sessionRef.current.history.length} history items and ${sessionRef.current.tasks.length} tasks` },
         { role: 'spacer' }
       ]);
     }
-    setShowContextPrompt(false);
-  }, [session, contextManager]);
-
-  const handleNew = React.useCallback(() => {
-    // Archive old context before starting fresh
-    contextManager.archiveContext();
-    setMessages([
-      { role: 'context', text: 'Starting fresh session (previous context archived)' },
-      { role: 'spacer' }
-    ]);
-    setShowContextPrompt(false);
   }, [contextManager]);
-
-  const handleDismiss = React.useCallback(() => {
-    setMessages([
-      { role: 'system', text: 'Continuing without loading context' },
-      { role: 'spacer' }
-    ]);
-    setShowContextPrompt(false);
-  }, []);
 
   // Handle slash commands
   const handleSlashCommand = React.useCallback((cmd) => {
@@ -447,12 +419,12 @@ export function App({ session, modelAdapter, initialInput, options }) {
     }
     
     if (command === '/clear') {
-      // Clear both UI and saved context
+      // Archive old context and start fresh
+      contextManager.archiveContext();
       setMessages([]);
-      session.history = [];
-      session.tasks = [];
-      contextManager.clearContext();
-      appendMessage({ role: 'system', text: 'All context cleared - starting fresh' });
+      sessionRef.current.history = [];
+      sessionRef.current.tasks = [];
+      appendMessage({ role: 'context', text: 'Context cleared and archived. Starting fresh session.' });
       appendMessage({ role: 'spacer' });
       return true;
     }
@@ -510,27 +482,11 @@ Remember: Only READ files, do not write or modify anything.`;
 
   // Run initial input if provided
   React.useEffect(() => {
-    if (!showContextPrompt && initialInput && initialInput.trim()) {
+    if (initialInput && initialInput.trim()) {
       runAgent(initialInput.trim());
     }
-  }, [showContextPrompt]);
+  }, []);
 
-  // Show context prompt if needed
-  if (showContextPrompt && contextSummary) {
-    return h(
-      Box,
-      { flexDirection: 'column', paddingX: 1, paddingY: 1 },
-      headerBanner(),
-      h(Box, { marginTop: 1 },
-        h(ContextPrompt, {
-          contextSummary,
-          onResume: handleResume,
-          onNew: handleNew,
-          onDismiss: handleDismiss
-        })
-      )
-    );
-  }
 
   return h(
     Box,
