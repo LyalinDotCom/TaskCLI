@@ -70,6 +70,12 @@ export class ModelAdapter {
         config: config
       });
 
+      // Debug: Log raw response structure
+      if (process.env.DEBUG_MODEL === '1') {
+        console.error('\n[DEBUG] Raw API Response:');
+        console.error(JSON.stringify(response, null, 2).substring(0, 1000));
+      }
+
       // Extract thoughts and text from response
       let thoughts = '';
       let responseText = '';
@@ -89,8 +95,21 @@ export class ModelAdapter {
         this.lastThoughts = thoughts.trim();
       }
       
-      // Use extracted text or fallback
-      const text = responseText || response.text || '';
+      // Try multiple ways to get the text
+      const text = responseText || 
+                   response.text || 
+                   response.candidates?.[0]?.text ||
+                   response.response?.text ||
+                   '';
+      
+      // Log what we're trying to parse
+      if (process.env.DEBUG_MODEL === '1' || !text) {
+        console.error('\n[DEBUG] Text extraction:');
+        console.error('- responseText:', responseText ? responseText.substring(0, 100) : 'empty');
+        console.error('- response.text:', response.text ? response.text.substring(0, 100) : 'empty');
+        console.error('- candidates[0].text:', response.candidates?.[0]?.text ? response.candidates[0].text.substring(0, 100) : 'empty');
+        console.error('- Final text to parse:', text ? text.substring(0, 200) : 'empty');
+      }
       
       // Parse JSON response with better error handling
       try {
@@ -116,14 +135,24 @@ export class ModelAdapter {
           }
         }
         
-        console.error('\n❌ Model Response Error');
+        console.error('\n❌ Model Response Error - No Valid JSON Found');
         console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.error('Expected JSON but received:', text.substring(0, 500));
+        console.error('Expected JSON but received:');
+        console.error('Raw text:', text);
+        console.error('\nFull response object:');
+        console.error(JSON.stringify(response, null, 2));
         if (thoughts) {
-          console.error('\nModel thoughts:', thoughts.substring(0, 500));
+          console.error('\nModel thoughts:', thoughts);
+        }
+        console.error('\nDebug Info:');
+        console.error('- Response text present:', !!responseText);
+        console.error('- Response.text present:', !!response.text);
+        console.error('- Candidates present:', !!response.candidates);
+        if (response.candidates?.[0]) {
+          console.error('- Candidate content:', JSON.stringify(response.candidates[0].content));
         }
         console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        throw new Error('Model did not return valid JSON. This might be due to an API issue or prompt problem.');
+        throw new Error('Model did not return valid JSON. Raw response logged above.');
       }
     } catch (error) {
       // Enhanced error reporting

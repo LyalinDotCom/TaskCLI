@@ -135,20 +135,50 @@ export class AutonomousAgent {
       const response = await this._getNextAction(conversationHistory, ui);
       
       if (!response || !response.action) {
+        // Show detailed debug info
+        if (ui?.onLog) {
+          ui.onLog(chalk.red('\n❌ Invalid Model Response'));
+          ui.onLog(chalk.red('━'.repeat(60)));
+          ui.onLog(chalk.yellow(`Iteration ${iteration}/50`));
+          
+          // Show what we got
+          ui.onLog(chalk.gray('\nReceived response:'));
+          ui.onLog(chalk.gray(JSON.stringify(response, null, 2).substring(0, 500)));
+          
+          // Show last conversation context
+          const lastUserMsg = conversationHistory[conversationHistory.length - 1];
+          if (lastUserMsg) {
+            ui.onLog(chalk.gray('\nLast message:'));
+            ui.onLog(chalk.gray(JSON.stringify(lastUserMsg, null, 2).substring(0, 300)));
+          }
+          
+          // Show model's last thoughts if available
+          const lastThoughts = this.model.getLastThoughts();
+          if (lastThoughts) {
+            ui.onLog(chalk.gray('\nModel thoughts:'));
+            ui.onLog(chalk.gray(lastThoughts.substring(0, 300)));
+          }
+          
+          ui.onLog(chalk.red('━'.repeat(60)));
+        }
+        
         // Retry with a stronger reminder about JSON format
         if (iteration <= 2) {
-          if (ui?.onLog) ui.onLog(chalk.yellow('Retrying with clearer instructions...'));
+          if (ui?.onLog) ui.onLog(chalk.yellow('\nRetrying with clearer instructions...'));
           
           conversationHistory.push({
             role: 'system',
-            content: 'IMPORTANT: You must respond with valid JSON only. Choose ONE next action. Example: {"thinking": "I need to read the main file first", "action": {"type": "tool", "tool": "read_file", "params": {"path": "index.js"}}}'
+            content: 'CRITICAL: You MUST respond with valid JSON only. No markdown, no explanations. The JSON must have "action" field. Example: {"thinking": "analyzing", "action": {"type": "tool", "tool": "read_file", "params": {"path": "file.js"}}}'
           });
           
           continue; // Try again
         }
         
-        if (ui?.onLog) ui.onLog(chalk.red('Failed to get valid response from model'));
-        return { success: false, error: 'Invalid model response' };
+        if (ui?.onLog) {
+          ui.onLog(chalk.red('\n❌ Failed after retries'));
+          ui.onLog(chalk.red('The model is not returning valid JSON with an "action" field'));
+        }
+        return { success: false, error: 'Invalid model response - missing action field' };
       }
 
       // Log thinking if in debug mode
@@ -247,7 +277,33 @@ export class AutonomousAgent {
       return response;
     } catch (error) {
       if (ui?.onModelEnd) ui.onModelEnd();
-      console.error('Model error:', error);
+      
+      // Comprehensive error logging
+      if (ui?.onLog) {
+        ui.onLog(chalk.red('\n❌ Model API Error'));
+        ui.onLog(chalk.red('━'.repeat(60)));
+        ui.onLog(chalk.red('Error Type: ' + error.constructor.name));
+        ui.onLog(chalk.red('Error Message: ' + error.message));
+        
+        if (error.stack) {
+          ui.onLog(chalk.gray('\nStack Trace:'));
+          ui.onLog(chalk.gray(error.stack.split('\n').slice(0, 5).join('\n')));
+        }
+        
+        // Show request context
+        ui.onLog(chalk.gray('\nRequest Context:'));
+        ui.onLog(chalk.gray('- Prompt length: ' + prompt?.length + ' chars'));
+        ui.onLog(chalk.gray('- History items: ' + history?.length));
+        ui.onLog(chalk.gray('- Temperature: 0.1'));
+        
+        // Show raw error details
+        ui.onLog(chalk.gray('\nRaw Error:'));
+        ui.onLog(chalk.gray(JSON.stringify(error, Object.getOwnPropertyNames(error), 2).substring(0, 500)));
+        
+        ui.onLog(chalk.red('━'.repeat(60)));
+      }
+      
+      console.error('Full error object:', error);
       return null;
     }
   }
