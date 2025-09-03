@@ -59,8 +59,8 @@ function buildTranscript(session) {
 }
 
 export async function loadModels() {
-  // Fixed models - no parameters needed
-  const flashModel = 'gemini-2.5-flash';
+  // Fixed models - no parameters needed (using Pro for everything now)
+  const flashModel = 'gemini-2.5-pro';  // Using Pro for planning too
   const proModel = 'gemini-2.5-pro';
   
   const gen = await importFlashGenkit();

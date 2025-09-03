@@ -223,7 +223,7 @@ export class AutonomousAgent {
    */
   async _getNextAction(conversationHistory, ui) {
     try {
-      if (ui?.onModelStart) ui.onModelStart('gemini-flash-thinking');
+      if (ui?.onModelStart) ui.onModelStart('gemini-2.5-pro');
       
       // Use the new model adapter with structured output
       const prompt = conversationHistory[conversationHistory.length - 1].content;

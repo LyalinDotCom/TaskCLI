@@ -33,7 +33,7 @@ function loadEnv() {
 function parseArgs(argv) {
   // Fixed models - no overrides allowed
   // Default to v2 (unified Pro orchestrator)
-  const args = { interactive: true, headless: false, yes: false, flashModel: 'gemini-2.5-flash', proModel: 'gemini-2.5-pro', cwd: process.cwd(), useV2: true };
+  const args = { interactive: true, headless: false, yes: false, flashModel: 'gemini-2.5-pro', proModel: 'gemini-2.5-pro', cwd: process.cwd(), useV2: true };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -68,7 +68,7 @@ function printHelp() {
     `  -h, --help          Show help\n\n` +
     `Models:\n` +
     `  Default (v2): Gemini 2.5 Pro only (unified planning/execution with adaptive recovery)\n` +
-    `  With --v1: Gemini 2.5 Flash (planning) + Pro (execution)\n\n` +
+    `  With --v1: Gemini 2.5 Pro for both planning and execution\n\n` +
     `Environment:\n` +
     `  GEMINI_API_KEY or GOOGLE_API_KEY    Required for Google AI access\n`);
 }
