@@ -135,6 +135,18 @@ export class AutonomousAgent {
       const response = await this._getNextAction(conversationHistory, ui);
       
       if (!response || !response.action) {
+        // Retry with a stronger reminder about JSON format
+        if (iteration <= 2) {
+          if (ui?.onLog) ui.onLog(chalk.yellow('Retrying with clearer instructions...'));
+          
+          conversationHistory.push({
+            role: 'system',
+            content: 'IMPORTANT: You must respond with valid JSON only. Choose ONE next action. Example: {"thinking": "I need to read the main file first", "action": {"type": "tool", "tool": "read_file", "params": {"path": "index.js"}}}'
+          });
+          
+          continue; // Try again
+        }
+        
         if (ui?.onLog) ui.onLog(chalk.red('Failed to get valid response from model'));
         return { success: false, error: 'Invalid model response' };
       }
@@ -303,11 +315,31 @@ export class AutonomousAgent {
    * Extract JSON from model response
    */
   _extractJSON(text) {
-    // Try to find JSON in the response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+    // First try: response might be pure JSON
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      // Continue to extraction
     }
+    
+    // Second try: find JSON object in the response
+    // Look for the LAST complete JSON object (in case there are multiple)
+    const matches = text.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
+    if (matches && matches.length > 0) {
+      // Try parsing from last to first (most likely to be the actual response)
+      for (let i = matches.length - 1; i >= 0; i--) {
+        try {
+          const parsed = JSON.parse(matches[i]);
+          // Validate it has the expected structure
+          if (parsed.action && parsed.thinking) {
+            return parsed;
+          }
+        } catch (e) {
+          // Try next match
+        }
+      }
+    }
+    
     throw new Error('No valid JSON found in response');
   }
 }

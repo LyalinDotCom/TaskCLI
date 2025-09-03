@@ -42,7 +42,7 @@ function parseArgs(argv) {
     cwd: process.cwd(),
     headless: false,
     yes: false,
-    thinkingBudget: 8000
+    thinkingBudget: -1  // Default to dynamic thinking
   };
   
   const rest = [];
@@ -82,7 +82,7 @@ Options:
   --doctor          Run environment checks
   -y, --yes         Auto-confirm all actions
   --cwd PATH        Working directory for tasks
-  --thinking NUM    Thinking budget for Gemini Pro (default: 8000, -1 to disable)
+  --thinking NUM    Thinking budget for Gemini 2.5 Pro (default: -1 for dynamic, 0 to disable)
   -h, --help        Show help
 
 Examples:
@@ -123,8 +123,8 @@ export async function main() {
     thinkingBudget: args.thinkingBudget
   });
   
-  // Create model adapter
-  const modelAdapter = createModelAdapter();
+  // Create model adapter with thinking budget
+  const modelAdapter = createModelAdapter(args.thinkingBudget);
   
   // Interactive mode (default if TTY and not headless)
   if (!args.headless && process.stdin.isTTY) {
