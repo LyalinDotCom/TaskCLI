@@ -94,15 +94,25 @@ function CommandItem({ command, description, isSelected, matchedPart }) {
 export function SlashCommandPalette({ input, onSelect }) {
   const [selectedIndex, setSelectedIndex] = React.useState(0);
   
-  // Filter commands based on input
+  // Filter commands based on input (prioritize startsWith matches)
   const query = input.startsWith('/') ? input.substring(1).toLowerCase() : '';
   const filteredCommands = React.useMemo(() => {
     if (!query) return SLASH_COMMANDS;
     
-    return SLASH_COMMANDS.filter(cmd => {
+    // First get commands that start with the query
+    const startsWithMatches = SLASH_COMMANDS.filter(cmd => {
       const cmdName = cmd.command.substring(1).toLowerCase();
-      return cmdName.startsWith(query) || cmdName.includes(query);
+      return cmdName.startsWith(query);
     });
+    
+    // Then get commands that contain but don't start with the query
+    const containsMatches = SLASH_COMMANDS.filter(cmd => {
+      const cmdName = cmd.command.substring(1).toLowerCase();
+      return !cmdName.startsWith(query) && cmdName.includes(query);
+    });
+    
+    // Return startsWith matches first, then contains matches
+    return [...startsWithMatches, ...containsMatches];
   }, [query]);
 
   // Reset selection when filtered list changes
@@ -110,23 +120,7 @@ export function SlashCommandPalette({ input, onSelect }) {
     setSelectedIndex(0);
   }, [filteredCommands.length]);
 
-  // Keyboard navigation
-  React.useEffect(() => {
-    const handleKeyPress = (key) => {
-      if (key === 'up') {
-        setSelectedIndex(prev => Math.max(0, prev - 1));
-      } else if (key === 'down') {
-        setSelectedIndex(prev => Math.min(filteredCommands.length - 1, prev + 1));
-      } else if (key === 'return' || key === 'tab') {
-        if (filteredCommands[selectedIndex]) {
-          onSelect(filteredCommands[selectedIndex].command);
-        }
-      }
-    };
-
-    // This would need to be integrated with Ink's useInput hook in the parent component
-    return () => {};
-  }, [selectedIndex, filteredCommands, onSelect]);
+  // Note: Keyboard navigation is handled by the parent component through useSlashCommands hook
 
   if (filteredCommands.length === 0) {
     return h(
@@ -179,7 +173,7 @@ export function SlashCommandPalette({ input, onSelect }) {
     h(Box, { marginBottom: 1 },
       h(Text, { color: 'cyan', bold: true }, 'Commands '),
       h(Text, { color: 'gray' }, `(${filteredCommands.length} available) `),
-      h(Text, { color: 'gray', dimColor: true }, '↑↓ navigate, ↵ select, ESC cancel')
+      h(Text, { color: 'gray', dimColor: true }, '↑↓ navigate, Tab complete, ↵ select, ESC cancel')
     ),
     ...Object.entries(grouped).map(([category, commands]) => 
       h(React.Fragment, { key: category },
@@ -207,6 +201,40 @@ export function SlashCommandPalette({ input, onSelect }) {
 export function useSlashCommands(input, setInput) {
   const [showPalette, setShowPalette] = React.useState(false);
   const [selectedIndex, setSelectedIndex] = React.useState(0);
+
+  // Auto-complete functionality for tab key
+  const handleTabComplete = React.useCallback(() => {
+    if (!input.startsWith('/')) return null;
+    
+    const query = input.substring(1).toLowerCase();
+    const filtered = SLASH_COMMANDS.filter(cmd => {
+      const cmdName = cmd.command.substring(1).toLowerCase();
+      return cmdName.startsWith(query);
+    });
+    
+    if (filtered.length === 1) {
+      // If there's exactly one match, complete to it
+      const baseCommand = filtered[0].command.split(' ')[0];
+      return baseCommand;
+    } else if (filtered.length > 1) {
+      // Find common prefix among all matches
+      const commands = filtered.map(c => c.command);
+      let commonPrefix = '/';
+      for (let i = 1; i < commands[0].length; i++) {
+        const char = commands[0][i];
+        if (commands.every(cmd => cmd[i] === char)) {
+          commonPrefix += char;
+        } else {
+          break;
+        }
+      }
+      // Only complete if common prefix is longer than current input
+      if (commonPrefix.length > input.length) {
+        return commonPrefix;
+      }
+    }
+    return null;
+  }, [input]);
 
   React.useEffect(() => {
     if (input.startsWith('/') && input.length > 0) {
@@ -239,7 +267,19 @@ export function useSlashCommands(input, setInput) {
     } else if (key.downArrow) {
       setSelectedIndex(prev => Math.min(filtered.length - 1, prev + 1));
       return true;
-    } else if (key.tab || (key.return && showPalette)) {
+    } else if (key.tab) {
+      // Tab completes to the first matching command or common prefix
+      const completion = handleTabComplete();
+      if (completion) {
+        setInput(completion);
+        // Keep palette open if there are multiple matches
+        if (filtered.length === 1) {
+          setShowPalette(false);
+        }
+      }
+      return true;
+    } else if (key.return && showPalette) {
+      // Return selects the currently highlighted command
       if (filtered[selectedIndex]) {
         handleSelect(filtered[selectedIndex].command);
       }
@@ -249,13 +289,14 @@ export function useSlashCommands(input, setInput) {
       return true;
     }
     return false;
-  }, [showPalette, input, selectedIndex, handleSelect]);
+  }, [showPalette, input, selectedIndex, handleSelect, setInput, handleTabComplete]);
 
   return {
     showPalette,
     selectedIndex,
     handleSelect,
     handleKeyNavigation,
-    setShowPalette
+    setShowPalette,
+    handleTabComplete
   };
 }

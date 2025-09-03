@@ -181,6 +181,15 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
       }
     }
     
+    // Handle tab completion for slash commands even when palette isn't showing
+    if (key.tab && input.startsWith('/') && !busy) {
+      const completion = slashCommands.handleTabComplete();
+      if (completion) {
+        setInput(completion);
+      }
+      return;
+    }
+    
     if (!busy) {
       if (key.upArrow && !slashCommands.showPalette) {
         setHistIdx((idx) => {
@@ -377,6 +386,7 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
   const handleSlashCommand = React.useCallback((cmd) => {
     const command = cmd.toLowerCase().trim();
     
+    // Check for exact match first
     if (command === '/help') {
       appendMessage({ role: 'system', text: 'Available commands:' });
       appendMessage({ role: 'system', text: '/resume - Resume from saved context' });
@@ -477,8 +487,32 @@ Remember: Only READ files, do not write or modify anything.`;
       return true;
     }
     
+    // Check if this looks like a partial slash command
+    if (command.startsWith('/')) {
+      // Get available commands from SlashCommandPalette
+      const availableCommands = ['/help', '/resume', '/save', '/clear', '/status', '/init', '/model', '/thinking', '/exit'];
+      
+      // Check if any command starts with this input
+      const matches = availableCommands.filter(c => c.startsWith(command));
+      
+      if (matches.length === 1) {
+        // If there's exactly one match, execute it
+        return handleSlashCommand(matches[0]);
+      } else if (matches.length > 1) {
+        // Multiple matches - show them
+        appendMessage({ role: 'error', text: `Ambiguous command. Did you mean: ${matches.join(', ')}?` });
+        appendMessage({ role: 'system', text: 'Use Tab to auto-complete commands.' });
+        return true;
+      } else {
+        // No matches - unknown command
+        appendMessage({ role: 'error', text: `Unknown command: ${command}` });
+        appendMessage({ role: 'system', text: 'Type /help for available commands.' });
+        return true;
+      }
+    }
+    
     return false;
-  }, [contextManager, session, handleResume, appendMessage]);
+  }, [contextManager, session, handleResume, appendMessage, exit]);
 
   // Run initial input if provided
   React.useEffect(() => {
