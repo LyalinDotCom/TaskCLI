@@ -216,6 +216,29 @@ export function App({ session, modelAdapter, initialInput, options }) {
 
   const ui = React.useMemo(() => ({
     appendMessage,
+    onLog: (message) => {
+      // Parse the message and convert to appropriate role
+      if (message.includes('→')) {
+        appendMessage({ role: 'tool', text: message.replace('→ ', '') });
+      } else if (message.includes('✓')) {
+        appendMessage({ role: 'success', text: message.replace(/^\s*✓\s*/, '') });
+      } else if (message.includes('✗')) {
+        appendMessage({ role: 'error', text: message.replace(/^\s*✗\s*/, '') });
+      } else if (message.includes('✨')) {
+        appendMessage({ role: 'complete', text: message.replace('✨ ', '') });
+      } else {
+        appendMessage({ role: 'output', text: message });
+      }
+    },
+    onModelStart: (name) => {
+      setModelBusy(true);
+      setModelName(name || 'Gemini Pro');
+      appendMessage({ role: 'system', text: `🤔 Thinking...` });
+    },
+    onModelEnd: () => {
+      setModelBusy(false);
+      setModelName('');
+    },
     onModelBusy: (name, busy) => {
       setModelBusy(busy);
       setModelName(name || '');

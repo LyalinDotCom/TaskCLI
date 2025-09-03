@@ -78,6 +78,17 @@ Your response must be EXACTLY in this format:
   }
 }
 
+## When to Complete
+
+Return {"action": {"type": "complete", "message": "..."}} when:
+- The user's goal has been achieved
+- A simple command has been executed successfully
+- The requested task is finished
+- You've answered the user's question
+- There's nothing more to do
+
+For simple tasks like "echo hello" or "list files", complete immediately after successful execution.
+
 Examples:
 {"thinking": "I need to run the build command first", "action": {"type": "tool", "tool": "run_command", "params": {"command": "npm run build"}}}
 {"thinking": "Build failed, let me read the error", "action": {"type": "tool", "tool": "read_file", "params": {"path": "src/index.ts"}}}
@@ -380,7 +391,28 @@ export class AutonomousAgent {
       const result = await toolRegistry.execute(toolName, params, this.context);
       
       if (result.success) {
-        if (ui?.onLog) ui.onLog(chalk.green(`  ✓ Success`));
+        // Provide more descriptive success messages
+        if (ui?.onLog) {
+          switch(toolName) {
+            case 'read_file':
+              ui.onLog(chalk.green(`  ✓ Read ${params.path} (${result.data?.content?.split('\n').length || 0} lines)`));
+              break;
+            case 'write_file':
+              ui.onLog(chalk.green(`  ✓ Wrote ${params.path}`));
+              break;
+            case 'edit_file':
+              ui.onLog(chalk.green(`  ✓ Edited ${params.path}`));
+              break;
+            case 'search_code':
+              ui.onLog(chalk.green(`  ✓ Found ${result.data?.matchCount || 0} matches`));
+              break;
+            case 'run_command':
+              ui.onLog(chalk.green(`  ✓ Command executed`));
+              break;
+            default:
+              ui.onLog(chalk.green(`  ✓ Success`));
+          }
+        }
         
         // Show relevant output
         if (result.data) {
