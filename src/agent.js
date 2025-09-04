@@ -837,9 +837,21 @@ export class AutonomousAgent {
       }
       
       if (result.success) {
+        // Handle task_list tool specially to update UI
+        if (toolName === 'task_list' && ui?.onTaskUpdate) {
+          const tasks = params.tasks || [];
+          const activeIndex = tasks.findIndex(t => t.status === 'in_progress');
+          ui.onTaskUpdate(tasks, activeIndex >= 0 ? activeIndex : 0);
+        }
+        
         // Provide more descriptive success messages
         if (ui?.onLog) {
           switch(toolName) {
+            case 'task_list':
+              const completed = params.tasks?.filter(t => t.status === 'completed').length || 0;
+              const total = params.tasks?.length || 0;
+              ui.onLog(chalk.green(`  ✓ Task list updated (${completed}/${total} complete)`));
+              break;
             case 'read_file':
               ui.onLog(chalk.green(`  ✓ Read ${params.path} (${result.data?.content?.split('\n').length || 0} lines)`));
               break;

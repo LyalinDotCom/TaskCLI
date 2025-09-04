@@ -57,6 +57,9 @@ function Message({ role, text }) {
   if (role === 'error') {
     return h(Box, null, h(Text, { color: 'red' }, `  ✗ ${text}`));
   }
+  if (role === 'thinking') {
+    return h(Box, null, h(Text, { color: 'gray', dimColor: true }, text));
+  }
   if (role === 'output') {
     return h(Box, null, h(Text, { color: 'gray' }, text));
   }
@@ -98,6 +101,10 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
   const [subAgentEvaluator] = React.useState(() => createEvaluator(modelAdapter));
   const [tokenStatus, setTokenStatus] = React.useState(null);
   const [agentTokenTracker, setAgentTokenTracker] = React.useState(null);
+  const [currentTasks, setCurrentTasks] = React.useState(null);
+  const [activeTaskIndex, setActiveTaskIndex] = React.useState(0);
+  const [collapsedThinking, setCollapsedThinking] = React.useState(true);
+  const [thinkingMessages, setThinkingMessages] = React.useState([]);
   
   // Use a ref for session to ensure callbacks always have the latest session data
   const sessionRef = React.useRef(initialSession);
@@ -228,6 +235,19 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
         setTimeout(() => setCancelRequested(false), 1000);
       }
     }
+    
+    // Toggle thinking messages with Ctrl+T
+    if (key.ctrl && inp === 't') {
+      setCollapsedThinking(prev => {
+        const newState = !prev;
+        // Show a status message about the toggle
+        appendMessage({ 
+          role: 'system', 
+          text: `🧠 Thinking messages ${newState ? 'collapsed' : 'expanded'}`
+        });
+        return newState;
+      });
+    }
   });
 
   const appendMessage = React.useCallback((msg) => {
@@ -299,6 +319,31 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
         action: responseInfo.action,
         iteration: responseInfo.iteration
       });
+      
+      // Collect thinking messages for collapsible display
+      if (responseInfo.thinking) {
+        setThinkingMessages(prev => [...prev, {
+          iteration: responseInfo.iteration,
+          thinking: responseInfo.thinking,
+          timestamp: responseInfo.timestamp
+        }]);
+        
+        // Show collapsed thinking summary
+        if (collapsedThinking) {
+          const thinkingSummary = responseInfo.thinking.split('\n')[0].substring(0, 80);
+          appendMessage({ 
+            role: 'thinking', 
+            text: `🧠 [${responseInfo.iteration}] ${thinkingSummary}... (Ctrl+T to expand)`
+          });
+        } else {
+          // Show full thinking
+          appendMessage({ 
+            role: 'thinking', 
+            text: `🧠 [${responseInfo.iteration}] Thinking:\n${responseInfo.thinking}`
+          });
+        }
+      }
+      
       // Save context after each AI decision
       saveContextDebounced();
     },
@@ -308,6 +353,10 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
     },
     onTokenUpdate: (status) => {
       setTokenStatus(status);
+    },
+    onTaskUpdate: (tasks, activeIndex) => {
+      setCurrentTasks(tasks);
+      setActiveTaskIndex(activeIndex !== undefined ? activeIndex : 0);
     }
   }), [cancelRequested, appendMessage, session, saveContextDebounced]);
 
@@ -759,7 +808,9 @@ Remember: Only READ files, do not write or modify anything.`;
           ? h(Text, { color: 'gray' }, h(Spinner), ` ${modelName}`)
           : evaluatingFeedback 
           ? h(Text, { color: 'yellow' }, h(Spinner), ' Sub-agent analyzing feedback')
-          : h(Text, { color: 'gray' }, 'Ctrl-C: exit | ↑↓: history | /: commands')
+          : h(Text, { color: 'gray' }, 
+              `Ctrl-C: exit | ↑↓: history | /: commands | Ctrl+T: ${collapsedThinking ? 'expand' : 'collapse'} thinking`
+            )
       ),
       h(Box, { justifyContent: 'space-between', width: '100%' },
         h(Box, null,
@@ -769,7 +820,17 @@ Remember: Only READ files, do not write or modify anything.`;
             ? h(Text, { color: 'green' }, ' [✓ context]')
             : null
         ),
-        tokenStatus ? h(Text, { color: tokenStatus.color }, ' ' + tokenStatus.text) : null
+        h(Box, null,
+          // Task progress display
+          currentTasks && currentTasks.length > 0 ? h(
+            Text, 
+            { color: 'magenta' },
+            `📋 ${activeTaskIndex + 1}/${currentTasks.length}: ${
+              currentTasks[activeTaskIndex]?.description || 'Setting up...'
+            } `
+          ) : null,
+          tokenStatus ? h(Text, { color: tokenStatus.color }, tokenStatus.text) : null
+        )
       )
     ),
   );
