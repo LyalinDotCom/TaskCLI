@@ -106,6 +106,7 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
   const [collapsedThinking, setCollapsedThinking] = React.useState(true);
   const [thinkingMessages, setThinkingMessages] = React.useState([]);
   const [ctrlPressed, setCtrlPressed] = React.useState(false);
+  const ctrlTRef = React.useRef(false);
   
   // Use a ref for session to ensure callbacks always have the latest session data
   const sessionRef = React.useRef(initialSession);
@@ -118,30 +119,58 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
   // Slash command palette state
   const slashCommands = useSlashCommands(input, setInput);
 
-  // Check for existing context and show inline message
+  // Check for existing context and auto-resume if available
   React.useEffect(() => {
     if (!contextChecked && !initialInput && !options.noResume) {
       setContextChecked(true);
       
       const summary = contextManager.getContextSummary();
-      if (summary) {
-        // Show inline context notification instead of dialog
-        let contextMsg;
-        if (summary.taskCount > 0 || summary.historyCount > 0) {
-          contextMsg = {
+      if (summary && (summary.taskCount > 0 || summary.historyCount > 0 || summary.wasUncleanExit)) {
+        // Auto-resume the session
+        const data = contextManager.loadContext();
+        if (data) {
+          // Merge the loaded session with current session
+          sessionRef.current.history = [...(data.session.history || [])];
+          sessionRef.current.tasks = [...(data.session.tasks || [])];
+          sessionRef.current.id = data.session.id; // Keep the original session ID
+          sessionRef.current.createdAt = data.session.createdAt; // Keep original creation time
+          
+          // Rebuild conversation history
+          const history = data.session.history || [];
+          const conversationHistory = [];
+          
+          // Reconstruct conversation from saved history
+          for (const entry of history) {
+            if (entry.type === 'user_goal') {
+              conversationHistory.push({ role: 'user', text: entry.message });
+            } else if (entry.type === 'ai_response') {
+              if (entry.thinking) {
+                conversationHistory.push({ 
+                  role: 'thinking', 
+                  text: `🧠 Thinking:\n${entry.thinking}`,
+                  fullThinking: entry.thinking,
+                  iteration: entry.iteration
+                });
+              }
+            } else if (entry.type === 'tool_execution') {
+              conversationHistory.push({ 
+                role: 'tool', 
+                text: `${entry.tool}(${JSON.stringify(entry.params) || ''})` 
+              });
+              
+              if (entry.success) {
+                conversationHistory.push({ role: 'success', text: 'Command executed' });
+              }
+            }
+          }
+          
+          // Show auto-resume message
+          const contextMsg = {
             role: 'system',
-            text: `💾 Previous session found (${summary.age}) with ${summary.taskCount} tasks, ${summary.historyCount} messages. Use /resume to continue or /clear to start fresh.`
+            text: `💾 Auto-resumed session (${summary.age}) with ${summary.taskCount} tasks, ${summary.historyCount} messages`
           };
-        } else if (summary.wasUncleanExit) {
-          // Show recovery message for crashed sessions
-          contextMsg = {
-            role: 'system',
-            text: `⚠️ Recovered from unexpected exit (${summary.age}). Use /resume to continue or /clear to start fresh.`
-          };
-        }
-        
-        if (contextMsg) {
-          setMessages([contextMsg]);
+          
+          setMessages([contextMsg, ...conversationHistory.slice(-20)]); // Show last 20 messages
         }
       }
     }
@@ -240,8 +269,8 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
     // Toggle thinking messages with Ctrl+T
     if (key.ctrl && inp === 't') {
       // Mark that we just handled Ctrl+T to filter it from the input
-      setCtrlPressed(true);
-      setTimeout(() => setCtrlPressed(false), 50); // Reset after a short delay
+      ctrlTRef.current = true;
+      setTimeout(() => { ctrlTRef.current = false; }, 100); // Reset after a short delay
       
       setCollapsedThinking(prev => {
         const newState = !prev;
@@ -847,9 +876,10 @@ Remember: Only READ files, do not write or modify anything.`;
       h(TextInput, {
         value: input,
         onChange: (newValue) => {
-          // Filter out 't' or 'T' if Ctrl was just pressed (for Ctrl+T handling)
-          if (ctrlPressed && newValue.length > input.length && 
+          // Filter out 't' or 'T' if Ctrl+T was just pressed
+          if (ctrlTRef.current && newValue.length > input.length && 
               (newValue[newValue.length - 1] === 't' || newValue[newValue.length - 1] === 'T')) {
+            ctrlTRef.current = false; // Reset immediately after filtering
             return; // Ignore this change
           }
           setInput(newValue);

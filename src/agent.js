@@ -243,6 +243,20 @@ Return {"action": {"type": "complete", "message": "..."}} when:
 
 For simple tasks like "echo hello" or "list files", complete immediately after successful execution.
 
+## CRITICAL: JSON Response Format
+You MUST respond with valid JSON in EXACTLY this structure:
+
+For tool execution:
+{"thinking": "Your thought process", "action": {"type": "tool", "tool": "tool_name", "params": {...}}}
+
+For completion:
+{"thinking": "Your thought process", "action": {"type": "complete", "message": "What was accomplished"}}
+
+For needing help:
+{"thinking": "Your thought process", "action": {"type": "need_help", "message": "What you need help with"}}
+
+NEVER use action.type as the tool name. The type must be "tool", "complete", or "need_help".
+
 Examples:
 {"thinking": "I need to run the build command first", "action": {"type": "tool", "tool": "run_command", "params": {"command": "npm run build"}}}
 {"thinking": "Build failed, let me read the error", "action": {"type": "tool", "tool": "read_file", "params": {"path": "src/index.ts"}}}
