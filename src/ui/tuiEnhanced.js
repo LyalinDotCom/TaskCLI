@@ -250,11 +250,11 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
         setMessages(msgs => msgs.map(msg => {
           if (msg.role === 'thinking' && msg.fullThinking) {
             if (newState) {
-              // Collapse the message
-              const summary = msg.fullThinking.split('\n')[0].substring(0, 80);
+              // Collapse the message - use bold summary if available
+              const summary = msg.boldSummary || msg.fullThinking.split('\n')[0].substring(0, 80);
               return {
                 ...msg,
-                text: `🧠 [${msg.iteration}] ${summary}... (Ctrl+T to expand)`
+                text: `🧠 [${msg.iteration}] ${summary}${msg.boldSummary ? '' : '...'} (Ctrl+T to expand)`
               };
             } else {
               // Expand the message
@@ -401,22 +401,29 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
           setActiveTaskIndex(currentTaskIndex >= 0 ? currentTaskIndex : 0);
         }
         
+        // Extract bold text from thinking for summary
+        const boldMatches = [...responseInfo.thinking.matchAll(/\*\*(.+?)\*\*/g)];
+        const boldSummary = boldMatches.map(match => match[1]).join(' → ');
+        
         // Show collapsed thinking summary
         if (collapsedThinking) {
-          const thinkingSummary = responseInfo.thinking.split('\n')[0].substring(0, 80);
+          // Use bold text as summary if available, otherwise first line
+          const thinkingSummary = boldSummary || responseInfo.thinking.split('\n')[0].substring(0, 80);
           appendMessage({ 
             role: 'thinking', 
-            text: `🧠 [${responseInfo.iteration}] ${thinkingSummary}... (Ctrl+T to expand)`,
+            text: `🧠 [${responseInfo.iteration}] ${thinkingSummary}${boldSummary ? '' : '...'} (Ctrl+T to expand)`,
             fullThinking: responseInfo.thinking,
-            iteration: responseInfo.iteration
+            iteration: responseInfo.iteration,
+            boldSummary: boldSummary
           });
         } else {
-          // Show full thinking
+          // Show full thinking without duplicating the bold summary
           appendMessage({ 
             role: 'thinking', 
             text: `🧠 [${responseInfo.iteration}] Thinking:\n${responseInfo.thinking}`,
             fullThinking: responseInfo.thinking,
-            iteration: responseInfo.iteration
+            iteration: responseInfo.iteration,
+            boldSummary: boldSummary
           });
         }
       }
