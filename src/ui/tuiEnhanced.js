@@ -58,7 +58,7 @@ function Message({ role, text }) {
     return h(Box, null, h(Text, { color: 'red' }, `  ✗ ${text}`));
   }
   if (role === 'thinking') {
-    return h(Box, null, h(Text, { color: 'gray', dimColor: true }, text));
+    return h(Box, null, h(Text, { color: '#9CA3AF' }, text));
   }
   if (role === 'output') {
     return h(Box, null, h(Text, { color: 'gray' }, text));
@@ -105,6 +105,7 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
   const [activeTaskIndex, setActiveTaskIndex] = React.useState(0);
   const [collapsedThinking, setCollapsedThinking] = React.useState(true);
   const [thinkingMessages, setThinkingMessages] = React.useState([]);
+  const [ctrlPressed, setCtrlPressed] = React.useState(false);
   
   // Use a ref for session to ensure callbacks always have the latest session data
   const sessionRef = React.useRef(initialSession);
@@ -238,13 +239,34 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
     
     // Toggle thinking messages with Ctrl+T
     if (key.ctrl && inp === 't') {
+      // Mark that we just handled Ctrl+T to filter it from the input
+      setCtrlPressed(true);
+      setTimeout(() => setCtrlPressed(false), 50); // Reset after a short delay
+      
       setCollapsedThinking(prev => {
         const newState = !prev;
-        // Show a status message about the toggle
-        appendMessage({ 
-          role: 'system', 
-          text: `🧠 Thinking messages ${newState ? 'collapsed' : 'expanded'}`
-        });
+        
+        // Update all existing thinking messages
+        setMessages(msgs => msgs.map(msg => {
+          if (msg.role === 'thinking' && msg.fullThinking) {
+            if (newState) {
+              // Collapse the message
+              const summary = msg.fullThinking.split('\n')[0].substring(0, 80);
+              return {
+                ...msg,
+                text: `🧠 [${msg.iteration}] ${summary}... (Ctrl+T to expand)`
+              };
+            } else {
+              // Expand the message
+              return {
+                ...msg,
+                text: `🧠 [${msg.iteration}] Thinking:\n${msg.fullThinking}`
+              };
+            }
+          }
+          return msg;
+        }));
+        
         return newState;
       });
     }
@@ -328,18 +350,73 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
           timestamp: responseInfo.timestamp
         }]);
         
+        // Try to extract task info from thinking for status bar
+        // Look for patterns like "Task 1:", "Step 2:", "1.", "2.", or task lists with checkboxes
+        const patterns = [
+          /(?:task|step)\s*(\d+)[:\s]+([^.\n]+)/i,
+          /^(\d+)\.\s+(.+?)(?:\n|$)/m,
+          /^\[([x\s])\]\s+(.+?)(?:\n|$)/gm,
+          /^[-*]\s+\[([x\s])\]\s+(.+?)(?:\n|$)/gm,
+          /^(?:□|■|✓)\s+(.+?)(?:\n|$)/gm
+        ];
+        
+        let extractedTasks = [];
+        let currentTaskIndex = -1;
+        
+        // Try to find task lists with checkboxes
+        const checkboxMatches = [...responseInfo.thinking.matchAll(/(?:^|\n)(?:[-*]\s+)?\[([x\s])\]\s+(.+?)(?:\n|$)/gm)];
+        if (checkboxMatches.length > 0) {
+          extractedTasks = checkboxMatches.map((match, i) => ({
+            description: match[2].trim(),
+            status: match[1].toLowerCase() === 'x' ? 'completed' : 'pending'
+          }));
+          currentTaskIndex = extractedTasks.findIndex(t => t.status === 'pending');
+          if (currentTaskIndex >= 0) {
+            extractedTasks[currentTaskIndex].status = 'in_progress';
+          }
+        } else {
+          // Try numbered patterns
+          const numberedMatch = responseInfo.thinking.match(/(?:task|step|^)\s*(\d+)[:\s.]+([^.\n]+)/im);
+          if (numberedMatch) {
+            const currentTaskNum = parseInt(numberedMatch[1]);
+            const currentTaskDesc = numberedMatch[2].trim();
+            
+            // Look for total task count
+            const totalMatch = responseInfo.thinking.match(/(\d+)\s*(?:tasks?|steps?|items?)/i);
+            const totalTasks = totalMatch ? parseInt(totalMatch[1]) : currentTaskNum;
+            
+            for (let i = 0; i < totalTasks; i++) {
+              extractedTasks.push({
+                description: i === currentTaskNum - 1 ? currentTaskDesc : `Step ${i + 1}`,
+                status: i < currentTaskNum - 1 ? 'completed' : (i === currentTaskNum - 1 ? 'in_progress' : 'pending')
+              });
+            }
+            currentTaskIndex = currentTaskNum - 1;
+          }
+        }
+        
+        // Update UI with extracted tasks
+        if (extractedTasks.length > 0) {
+          setCurrentTasks(extractedTasks);
+          setActiveTaskIndex(currentTaskIndex >= 0 ? currentTaskIndex : 0);
+        }
+        
         // Show collapsed thinking summary
         if (collapsedThinking) {
           const thinkingSummary = responseInfo.thinking.split('\n')[0].substring(0, 80);
           appendMessage({ 
             role: 'thinking', 
-            text: `🧠 [${responseInfo.iteration}] ${thinkingSummary}... (Ctrl+T to expand)`
+            text: `🧠 [${responseInfo.iteration}] ${thinkingSummary}... (Ctrl+T to expand)`,
+            fullThinking: responseInfo.thinking,
+            iteration: responseInfo.iteration
           });
         } else {
           // Show full thinking
           appendMessage({ 
             role: 'thinking', 
-            text: `🧠 [${responseInfo.iteration}] Thinking:\n${responseInfo.thinking}`
+            text: `🧠 [${responseInfo.iteration}] Thinking:\n${responseInfo.thinking}`,
+            fullThinking: responseInfo.thinking,
+            iteration: responseInfo.iteration
           });
         }
       }
@@ -762,7 +839,14 @@ Remember: Only READ files, do not write or modify anything.`;
       h(Text, null, ' '),
       h(TextInput, {
         value: input,
-        onChange: setInput,
+        onChange: (newValue) => {
+          // Filter out 't' or 'T' if Ctrl was just pressed (for Ctrl+T handling)
+          if (ctrlPressed && newValue.length > input.length && 
+              (newValue[newValue.length - 1] === 't' || newValue[newValue.length - 1] === 'T')) {
+            return; // Ignore this change
+          }
+          setInput(newValue);
+        },
         placeholder: busy ? 'Working...' : 'Describe your goal or type / for commands...',
         onSubmit: (val) => {
           const trimmed = val.trim();
