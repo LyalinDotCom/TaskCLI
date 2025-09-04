@@ -3,6 +3,7 @@ import { ReadFileTool } from './read_file.js';
 import { WriteFileTool } from './write_file.js';
 import { EditFileTool } from './edit_file.js';
 import { SearchCodeTool } from './search_code.js';
+import { TaskTrackerTool } from './taskTracker.js';
 
 /**
  * Tool Registry - all available tools
@@ -17,6 +18,7 @@ export class ToolRegistry {
     this.register(new WriteFileTool());
     this.register(new EditFileTool());
     this.register(new SearchCodeTool());
+    this.register(new TaskTrackerTool());
   }
 
   register(tool) {
