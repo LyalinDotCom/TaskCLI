@@ -126,7 +126,7 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
       
       const summary = contextManager.getContextSummary();
       if (summary && (summary.taskCount > 0 || summary.historyCount > 0 || summary.wasUncleanExit)) {
-        // Auto-resume the session
+        // Auto-resume the session silently
         const data = contextManager.loadContext();
         if (data) {
           // Merge the loaded session with current session
@@ -135,42 +135,13 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
           sessionRef.current.id = data.session.id; // Keep the original session ID
           sessionRef.current.createdAt = data.session.createdAt; // Keep original creation time
           
-          // Rebuild conversation history
-          const history = data.session.history || [];
-          const conversationHistory = [];
-          
-          // Reconstruct conversation from saved history
-          for (const entry of history) {
-            if (entry.type === 'user_goal') {
-              conversationHistory.push({ role: 'user', text: entry.message });
-            } else if (entry.type === 'ai_response') {
-              if (entry.thinking) {
-                conversationHistory.push({ 
-                  role: 'thinking', 
-                  text: `🧠 Thinking:\n${entry.thinking}`,
-                  fullThinking: entry.thinking,
-                  iteration: entry.iteration
-                });
-              }
-            } else if (entry.type === 'tool_execution') {
-              conversationHistory.push({ 
-                role: 'tool', 
-                text: `${entry.tool}(${JSON.stringify(entry.params) || ''})` 
-              });
-              
-              if (entry.success) {
-                conversationHistory.push({ role: 'success', text: 'Command executed' });
-              }
-            }
-          }
-          
-          // Show auto-resume message
+          // Just show a subtle indicator that context was loaded
           const contextMsg = {
             role: 'system',
-            text: `💾 Auto-resumed session (${summary.age}) with ${summary.taskCount} tasks, ${summary.historyCount} messages`
+            text: `💾 Resumed session (${summary.age}) • ${summary.historyCount} messages in context`
           };
           
-          setMessages([contextMsg, ...conversationHistory.slice(-20)]); // Show last 20 messages
+          setMessages([contextMsg]);
         }
       }
     }
@@ -255,14 +226,26 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
         });
       }
     }
-    // Double-ESC to cancel
+    // Double-ESC to cancel and stop execution
     if (key.escape) {
       if (cancelRequested) {
+        // Second escape - stop execution completely
         if (killRef.current) killRef.current();
         setCancelRequested(false);
+        setBusy(false); // Stop busy state
+        setQueue([]); // Clear any queued commands
+        setModelBusy(false); // Stop model busy state
+        setCurrentAgent(null); // Clear current agent
+        
+        // Show cancellation message
+        appendMessage({ role: 'system', text: '🛑 Execution stopped. Waiting for new input...' });
       } else {
+        // First escape - set cancel requested
         setCancelRequested(true);
-        setTimeout(() => setCancelRequested(false), 1000);
+        appendMessage({ role: 'system', text: '⚠️ Press ESC again to stop execution' });
+        setTimeout(() => {
+          setCancelRequested(false);
+        }, 2000); // Give 2 seconds to press escape again
       }
     }
     
@@ -582,14 +565,17 @@ export function App({ session: initialSession, modelAdapter, initialInput, optio
       setModelName('');
       setCurrentAgent(null); // Clear agent reference
       
-      // Process queued inputs
+      // Process queued inputs only if not cancelled
       setQueue((q) => {
         const copy = [...q];
-        const next = copy.shift();
-        if (next) {
-          setTimeout(() => runAgent(next), 0);
+        // Only process queue if there's no cancellation
+        if (!cancelRequested && copy.length > 0) {
+          const next = copy.shift();
+          if (next) {
+            setTimeout(() => runAgent(next), 0);
+          }
         }
-        return copy;
+        return cancelRequested ? [] : copy; // Clear queue if cancelled
       });
     }
   }
